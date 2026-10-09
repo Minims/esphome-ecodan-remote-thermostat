@@ -1,0 +1,63 @@
+# Noms du nœud et des entités à adapter après ajout de l'intégration ESPHome.
+# last_seen doit dater une mesure physique et correspondre à la température.
+# Ne pas le remplacer par now(), last_changed ou un signalement de cache.
+script:
+  cnrf_proxy_temperature_chambre:
+    alias: PAC - Envoyer la mesure datée de la chambre
+    mode: restart
+    fields:
+      temperature:
+        required: true
+      sample_timestamp:
+        required: true
+    sequence:
+      - action: esphome.ecodan_cnrf_proxy_cnrf_override
+        data:
+          temperature: "{{ temperature | float }}"
+          sample_age_ms: >-
+            {{ ((as_timestamp(now()) - as_timestamp(sample_timestamp, 0)) * 1000)
+               | round(0, 'ceil') | int }}
+
+  cnrf_proxy_retour_salon:
+    alias: PAC - Revenir au thermostat du salon
+    mode: restart
+    sequence:
+      - action: esphome.ecodan_cnrf_proxy_cnrf_disable
+
+automation:
+  - id: cnrf_proxy_temperature_nuit
+    alias: PAC - Sonde chambre via proxy CNRF
+    mode: restart
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: time
+        at: "22:30:00"
+      - trigger: time
+        at: "07:00:00"
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id:
+          - sensor.temperature_chambre
+          - sensor.temperature_chambre_last_seen
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {% set minute = now().hour * 60 + now().minute %}
+                  {% set temp = states('sensor.temperature_chambre') %}
+                  {% set stamp = as_timestamp(states('sensor.temperature_chambre_last_seen'), none) %}
+                  {{ (minute >= 22 * 60 + 30 or minute < 7 * 60)
+                     and temp | is_number and 10 <= temp | float <= 30
+                     and stamp is not none and 0 <= as_timestamp(now()) - stamp < 600
+                     and not state_attr('sensor.temperature_chambre', 'restored')
+                     and not state_attr('sensor.temperature_chambre_last_seen', 'restored') }}
+            sequence:
+              - action: script.cnrf_proxy_temperature_chambre
+                data:
+                  temperature: "{{ states('sensor.temperature_chambre') }}"
+                  sample_timestamp: "{{ states('sensor.temperature_chambre_last_seen') }}"
+        default:
+          - action: script.cnrf_proxy_retour_salon

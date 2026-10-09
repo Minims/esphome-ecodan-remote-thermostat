@@ -9,6 +9,7 @@ namespace esphome {
 namespace ecodan 
 {       
     void EcodanHeatpump::set_room_thermostat_target_temp(float temp, ClimateRoomIdentifier room) {
+        if (proxy_mode_) return;
         if (temp != NAN) {
             auto room_index = static_cast<uint8_t>(room);
             status.TargetRoomTemperatures[room_index] = temp;
@@ -42,6 +43,7 @@ namespace ecodan
 
     bool EcodanHeatpump::schedule_cmd(Message& cmd)
     {   
+        if (proxy_mode_) return false;
         cmdQueue.emplace(std::move(cmd));
         return dispatch_next_cmd();
     }

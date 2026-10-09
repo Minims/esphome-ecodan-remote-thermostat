@@ -15,6 +15,7 @@
 
 #include "proto.h"
 #include "status.h"
+#include "cnrf_proxy.h"
 
 namespace esphome {
 namespace ecodan 
@@ -27,7 +28,20 @@ namespace ecodan
         void setup() override;
         void update() override;
         void loop() override;
-        void dump_config() override;    
+        void dump_config() override;
+        float get_setup_priority() const override { return proxy_mode_ ? setup_priority::BUS - 1 : setup_priority::DATA; }
+#ifdef USE_ECODAN_CNRF_PROXY
+        void set_cnrf_proxy(uint8_t controller, int ftc_tx, int ftc_rx, int receiver_tx, int receiver_rx, uint32_t override_timeout_ms) {
+            proxy_mode_ = true;
+            cnrf_proxy_.configure(controller, ftc_tx, ftc_rx, receiver_tx, receiver_rx, override_timeout_ms);
+        }
+        bool set_proxy_override(float temperature, int32_t sample_age_ms) {
+            return proxy_mode_ && cnrf_proxy_.apply(temperature, sample_age_ms);
+        }
+        void disable_proxy_override() { cnrf_proxy_.disable(); }
+        CnrfProxyStatus get_proxy_status() { return cnrf_proxy_.status(); }
+        void on_shutdown() override { if (proxy_mode_) cnrf_proxy_.stop(); }
+#endif
     
         void register_sensor(sensor::Sensor *obj, const std::string& key) {
             sensors[key] = obj;
@@ -68,6 +82,10 @@ namespace ecodan
         bool is_connected();        
     
     private:
+        bool proxy_mode_{false};
+#ifdef USE_ECODAN_CNRF_PROXY
+        CnrfProxy cnrf_proxy_;
+#endif
         uart::UARTComponent *uart_ = nullptr;
         uart::UARTComponent *proxy_uart_ = nullptr;
         Message res_buffer_;

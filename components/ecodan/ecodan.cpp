@@ -4,10 +4,21 @@ namespace esphome {
 namespace ecodan 
 { 
     void EcodanHeatpump::setup() {
+#ifdef USE_ECODAN_CNRF_PROXY
+        if (proxy_mode_) {
+            heatpumpInitialized = cnrf_proxy_.start(uart_, proxy_uart_);
+            if (!heatpumpInitialized) {
+                ESP_LOGE(TAG, "Impossible de démarrer le proxy CNRF");
+                mark_failed();
+            }
+            return;
+        }
+#endif
         heatpumpInitialized = initialize();
     }
 
     void EcodanHeatpump::set_room_thermostat_current_temp(float temp, uint8_t room) {
+        if (proxy_mode_) return;
         if (temp != NAN && room < 8 && room >= 0) {
             status.CurrentRoomTemperatures[room] = temp;
         }
@@ -50,6 +61,7 @@ namespace ecodan
     }
 
     void EcodanHeatpump::update() {        
+        if (proxy_mode_) return;
         if (heatpumpInitialized)
             handle_loop();            
     }
@@ -91,6 +103,7 @@ namespace ecodan
 
     void EcodanHeatpump::loop()
     {
+        if (proxy_mode_) return;
         static auto last_response = std::chrono::steady_clock::now();
 
         if (proxy_uart_ && proxy_uart_->available() > 0) {

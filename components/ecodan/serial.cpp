@@ -5,6 +5,7 @@ namespace ecodan
 {
     bool EcodanHeatpump::serial_tx(uart::UARTComponent *uart, Message& msg)
     {
+        if (proxy_mode_) return false;
         if (!uart)
         {
             ESP_LOGE(TAG, "Serial connection unavailable for tx");

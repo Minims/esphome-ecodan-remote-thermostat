@@ -1,0 +1,252 @@
+# ESPHome 2026.9.1. Copier secrets.example.yaml vers secrets.yaml et renseigner les valeurs.
+# FTC CNRF -> Asgard HP -> Asgard SL -> PAR-WR61R-E.
+esphome:
+  name: ecodan-cnrf-proxy
+  friendly_name: Proxy CNRF Asgard
+  min_version: 2026.9.1
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 4MB  # Taille de partition prudente ; identifier la flash avant téléversement.
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [ecodan]
+
+logger:
+  baud_rate: 0
+  level: WARN
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    - action: cnrf_override
+      variables:
+        temperature: float
+        sample_age_ms: int
+      then:
+        - api.respond:
+            success: !lambda return id(ecodan_instance).set_proxy_override(temperature, sample_age_ms);
+            error_message: "Température/âge invalides ou pont UART indisponible"
+            data: !lambda |-
+              root["remaining_ms"] = id(ecodan_instance).get_proxy_status().remaining_ms;
+    - action: cnrf_disable
+      then:
+        - lambda: id(ecodan_instance).disable_proxy_override();
+        - api.respond:
+            data: !lambda |-
+              root["accepted"] = true;
+
+web_server:
+  version: 3
+  port: 80
+  local: true
+  log: false
+  auth:
+    username: !secret web_server_username
+    password: !secret web_server_password
+    type: digest
+  sorting_groups:
+    - id: commande
+      name: Commande temporaire
+      sorting_weight: 10
+    - id: mesures
+      name: Températures et expiration
+      sorting_weight: 20
+    - id: diagnostic
+      name: Communication CNRF
+      sorting_weight: 30
+
+uart:
+  - id: uart_ecodan
+    tx_pin: GPIO39
+    rx_pin: GPIO38
+    baud_rate: 2400
+    parity: EVEN
+    data_bits: 8
+    stop_bits: 1
+  - id: uart_receiver
+    tx_pin: GPIO7
+    rx_pin: GPIO8
+    baud_rate: 2400
+    parity: EVEN
+    data_bits: 8
+    stop_bits: 1
+
+ecodan:
+  id: ecodan_instance
+  uart_id: uart_ecodan
+  proxy_uart_id: uart_receiver
+  proxy_mode: true
+  proxy_controller: 1
+  proxy_override_timeout: 10min
+
+number:
+  - platform: template
+    id: manual_temperature
+    name: Température manuelle à appliquer
+    unit_of_measurement: °C
+    min_value: 10
+    max_value: 30
+    step: 0.5
+    initial_value: 16
+    restore_value: false
+    optimistic: true
+    mode: box
+    web_server:
+      sorting_group_id: commande
+      sorting_weight: 10
+
+button:
+  - platform: template
+    name: Appliquer pour 10 minutes
+    web_server:
+      sorting_group_id: commande
+      sorting_weight: 20
+    on_press:
+      - lambda: |-
+          if (!id(ecodan_instance).set_proxy_override(id(manual_temperature).state, 0))
+            ESP_LOGW("cnrf", "Commande refusée : température invalide ou pont indisponible");
+  - platform: template
+    name: Revenir au thermostat
+    web_server:
+      sorting_group_id: commande
+      sorting_weight: 30
+    on_press:
+      - lambda: id(ecodan_instance).disable_proxy_override();
+
+binary_sensor:
+  - platform: template
+    name: Remplacement actif
+    lambda: return id(ecodan_instance).get_proxy_status().effective;
+    web_server:
+      sorting_group_id: mesures
+  - platform: template
+    name: Défaut UART depuis la dernière activation
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().uart_fault;
+    web_server:
+      sorting_group_id: diagnostic
+
+text_sensor:
+  - platform: template
+    name: État du proxy
+    update_interval: 2s
+    web_server:
+      sorting_group_id: commande
+      sorting_weight: 0
+    lambda: |-
+      auto s = id(ecodan_instance).get_proxy_status();
+      if (!s.ready) return {"Pont UART indisponible"};
+      if (s.uart_fault) return {"Erreur UART : remplacement arrêté"};
+      if (!s.ftc_seen || !s.receiver_seen) return {"En attente de données des deux appareils"};
+      if (s.effective) return {"Remplacement autorisé sur les prochaines trames valides"};
+      if (s.requested) return {"Mesure expirée : retour au thermostat"};
+      return {"Transmission de la mesure du thermostat"};
+
+sensor:
+  - platform: template
+    name: Dernière température du thermostat
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(ecodan_instance).get_proxy_status().original_temperature;
+    web_server:
+      sorting_group_id: mesures
+  - platform: template
+    name: Dernière température préparée pour la FTC
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(ecodan_instance).get_proxy_status().output_temperature;
+    web_server:
+      sorting_group_id: mesures
+  - platform: template
+    name: Température de remplacement demandée
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(ecodan_instance).get_proxy_status().target_temperature;
+    web_server:
+      sorting_group_id: mesures
+  - platform: template
+    name: Validité restante de la mesure
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    update_interval: 2s
+    lambda: return id(ecodan_instance).get_proxy_status().remaining_ms / 1000.0f;
+    web_server:
+      sorting_group_id: mesures
+  - platform: template
+    name: Âge du dernier octet FTC
+    unit_of_measurement: s
+    accuracy_decimals: 1
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: |-
+      auto s = id(ecodan_instance).get_proxy_status();
+      return s.ftc_seen ? static_cast<uint32_t>(millis() - s.ftc_last_rx) / 1000.0f : NAN;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Âge du dernier octet récepteur
+    unit_of_measurement: s
+    accuracy_decimals: 1
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: |-
+      auto s = id(ecodan_instance).get_proxy_status();
+      return s.receiver_seen ? static_cast<uint32_t>(millis() - s.receiver_last_rx) / 1000.0f : NAN;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Trames de température valides
+    accuracy_decimals: 0
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().valid_frames;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Trames modifiées
+    accuracy_decimals: 0
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().modified_frames;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Checksums invalides
+    accuracy_decimals: 0
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().invalid_frames;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Erreurs UART
+    accuracy_decimals: 0
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().uart_errors;
+    web_server:
+      sorting_group_id: diagnostic
+  - platform: template
+    name: Débordements UART
+    accuracy_decimals: 0
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().overflows;
+    web_server:
+      sorting_group_id: diagnostic

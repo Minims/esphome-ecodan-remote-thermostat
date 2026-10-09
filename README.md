@@ -1,6 +1,12 @@
 # ESPHome Ecodan Remote Thermostat
 Mimics a remote thermostat over CNRF. You can use any thermostat/temp sensor as a remote thermostat. This projects supports up to 8 remote thermostats. Use any temperature sensor or thermostat as data source for the Ecodan heatpump. The required hardware is the same as used by https://github.com/gekkekoe/esphome-ecodan-hp
 
+# Extension locale : proxy CNRF Asgard
+
+Le mode `proxy_mode: true` conserve le récepteur officiel `PAR-WR61R-E` et permet de remplacer RC1 par une mesure fraîche de Home Assistant. Il ajoute une tâche UART indépendante, une expiration locale et une interface web ESPHome. Utiliser **`ecodan-cnrf-proxy-asgard.yaml`**, qui charge les composants locaux.
+
+Voir le [guide du proxy et sa recette](docs/cnrf-proxy.md). Le montage reste expérimental : tests logiciels et compilation ne valident pas les niveaux électriques ni la latence acceptée par la PAC. Le fichier `ecodan-remote-thermostat-esphome.yaml` ci-dessous reste la configuration d’émulation amont.
+
 # A better alternative
 With the introduced Asgard PCB, there's another alternative to CNRF (high resolution supported). [more info](https://github.com/gekkekoe/esphome-ecodan-hp/discussions/261) 
 

@@ -202,7 +202,7 @@ void test_bad_checksum_diagnostics_and_wrap() {
 }  // namespace
 
 int main() {
-  // Une trame reçue corrompue ne doit jamais être réparée par l'override.
+  // An override must never repair a corrupted incoming frame.
   auto corrupt = kNormalFrame;
   corrupt[21] ^= 1;
   CnrfFrameRewriter corrupt_rewriter;

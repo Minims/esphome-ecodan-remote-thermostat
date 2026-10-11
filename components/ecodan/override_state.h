@@ -9,6 +9,7 @@ class OverrideState {
   explicit OverrideState(uint32_t timeout_ms = DEFAULT_TIMEOUT_MS) : timeout_ms_(timeout_ms) {}
 
   void set_timeout(uint32_t timeout_ms) { timeout_ms_ = timeout_ms; }
+  uint32_t timeout_ms() const { return timeout_ms_; }
 
   bool accept(float temperature, int32_t sample_age_ms, uint32_t now) {
     if (!std::isfinite(temperature) || temperature < 10 || temperature > 30 ||

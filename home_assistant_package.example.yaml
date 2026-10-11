@@ -1,6 +1,8 @@
-# Noms du nœud et des entités à adapter après ajout de l'intégration ESPHome.
-# last_seen doit dater une mesure physique et correspondre à la température.
-# Ne pas le remplacer par now(), last_changed ou un signalement de cache.
+# Adapt node and entity names after adding the ESPHome integration.
+# last_seen must timestamp the physical measurement matching the temperature.
+# Do not replace it with now(), last_changed or a cached-state report.
+# Rename the "Durée maximale de la mesure" entity to the ID used below,
+# or update its references; its value in seconds comes from the firmware.
 script:
   cnrf_proxy_temperature_chambre:
     alias: PAC - Envoyer la mesure datée de la chambre
@@ -41,6 +43,7 @@ automation:
         entity_id:
           - sensor.temperature_chambre
           - sensor.temperature_chambre_last_seen
+          - sensor.ecodan_cnrf_proxy_override_timeout
     actions:
       - choose:
           - conditions:
@@ -49,11 +52,14 @@ automation:
                   {% set minute = now().hour * 60 + now().minute %}
                   {% set temp = states('sensor.temperature_chambre') %}
                   {% set stamp = as_timestamp(states('sensor.temperature_chambre_last_seen'), none) %}
+                  {% set timeout = states('sensor.ecodan_cnrf_proxy_override_timeout') %}
                   {{ (minute >= 22 * 60 + 30 or minute < 7 * 60)
                      and temp | is_number and 10 <= temp | float <= 30
-                     and stamp is not none and 0 <= as_timestamp(now()) - stamp < 600
+                     and timeout | is_number and timeout | float > 0
+                     and stamp is not none and 0 <= as_timestamp(now()) - stamp < timeout | float
                      and not state_attr('sensor.temperature_chambre', 'restored')
-                     and not state_attr('sensor.temperature_chambre_last_seen', 'restored') }}
+                     and not state_attr('sensor.temperature_chambre_last_seen', 'restored')
+                     and not state_attr('sensor.ecodan_cnrf_proxy_override_timeout', 'restored') }}
             sequence:
               - action: script.cnrf_proxy_temperature_chambre
                 data:

@@ -10,18 +10,39 @@
 #include <vector>
 
 using portMUX_TYPE = std::mutex;
+inline thread_local std::function<void()> fake_before_lock;
+inline void fake_enter_critical(std::mutex *mutex) {
+  auto hook = std::move(fake_before_lock);
+  fake_before_lock = nullptr;
+  if (hook) hook();
+  mutex->lock();
+}
 #define portMUX_INITIALIZER_UNLOCKED {}
-#define portENTER_CRITICAL(m) (m)->lock()
+#define portENTER_CRITICAL(m) fake_enter_critical(m)
 #define portEXIT_CRITICAL(m) (m)->unlock()
 constexpr int pdPASS = 1, pdTRUE = 1;
 inline std::atomic<uint32_t> fake_now{0};
 inline uint32_t millis() { return fake_now.load(); }
 inline std::thread proxy_thread;
+inline thread_local bool fake_task_thread = false;
+inline std::atomic<unsigned> fake_task_iterations{0};
+inline std::function<void()> fake_task_delay_hook;
 inline int xTaskCreate(void (*fn)(void *), const char *, int, void *self, int, void *) {
-  proxy_thread = std::thread(fn, self);
+  proxy_thread = std::thread([=] { fake_task_thread = true; fn(self); });
   return pdPASS;
 }
-inline void vTaskDelay(int) { std::this_thread::sleep_for(std::chrono::microseconds(100)); }
+inline int xPortGetCoreID() { return 0; }
+inline int xTaskCreatePinnedToCore(void (*fn)(void *), const char *name, int size, void *self, int priority, void *handle, int) {
+  return xTaskCreate(fn, name, size, self, priority, handle);
+}
+inline void vTaskDelay(int) {
+  if (fake_task_thread) {
+    ++fake_task_iterations;
+    auto hook = fake_task_delay_hook;
+    if (hook) hook();
+  }
+  std::this_thread::sleep_for(std::chrono::microseconds(100));
+}
 inline void vTaskDelete(void *) {}
 using uart_port_t = int;
 constexpr int UART_NUM_MAX = 3, ESP_OK = 0;
@@ -33,9 +54,11 @@ struct uart_event_t { int type; };
 struct FakePort {
   std::mutex mutex;
   std::deque<uint8_t> rx;
+  std::deque<uint8_t> fifo;
   std::vector<uint8_t> tx;
   std::deque<uart_event_t> events;
   int write_limit = 32;
+  int rx_threshold = 120;
   bool fail_next_read = false;
 };
 inline FakePort fake_ports[2];
@@ -48,8 +71,16 @@ inline int uart_driver_install(int port, int, int, int, QueueHandle_t *queue, in
 }
 inline int uart_param_config(int, const uart_config_t *) { return ESP_OK; }
 inline int uart_set_pin(int, int, int, int, int) { return ESP_OK; }
-inline int uart_set_rx_full_threshold(int, int) { return ESP_OK; }
+inline int uart_set_rx_full_threshold(int index, int threshold) {
+  fake_ports[index].rx_threshold = threshold;
+  return ESP_OK;
+}
 inline int uart_set_rx_timeout(int, int) { return ESP_OK; }
+inline int uart_get_buffered_data_len(int index, size_t *size) {
+  std::lock_guard<std::mutex> lock(fake_ports[index].mutex);
+  *size = fake_ports[index].rx.size();
+  return ESP_OK;
+}
 inline int xQueueReceive(QueueHandle_t port, uart_event_t *event, int) {
   std::lock_guard<std::mutex> lock(port->mutex);
   if (port->events.empty()) return 0;

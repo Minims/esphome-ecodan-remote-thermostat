@@ -1,4 +1,4 @@
-"""Valide les gardes du mode proxy avec le vrai validateur ESPHome."""
+"""Check proxy mode guards with the actual ESPHome configuration validator."""
 import os
 from pathlib import Path
 import subprocess

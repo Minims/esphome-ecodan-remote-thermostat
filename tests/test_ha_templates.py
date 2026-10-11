@@ -1,4 +1,4 @@
-"""Exécute les templates de l'exemple ; ne remplace pas une recette Home Assistant."""
+"""Exercise the example templates; this does not replace testing in Home Assistant."""
 from datetime import datetime, timedelta, timezone
 import math
 from pathlib import Path
@@ -40,7 +40,8 @@ cases = [
 ]
 for name, temp, age, now, restored, expected in cases:
     stamp = (now - timedelta(seconds=age)).isoformat() if age is not None else 'unknown'
-    states = {'sensor.temperature_chambre': temp, 'sensor.temperature_chambre_last_seen': stamp}
+    states = {'sensor.temperature_chambre': temp, 'sensor.temperature_chambre_last_seen': stamp,
+              'sensor.ecodan_cnrf_proxy_override_timeout': '600'}
     context = dict(now=lambda: now, states=lambda entity: states[entity],
                    state_attr=lambda entity, attr: restored, as_timestamp=timestamp)
     actual = env.from_string(condition).render(**context).strip()
@@ -48,4 +49,14 @@ for name, temp, age, now, restored, expected in cases:
     if expected:
         result = env.from_string(payload).render(**context, sample_timestamp=stamp)
         assert int(result) == age * 1000
-print(f'Home Assistant: {len(cases)} scénarios de templates OK')
+for age, timeout, expected in [(700, '900', True), (900, '900', False),
+                                (300, '300', False), (5, 'unavailable', False),
+                                (5, '0', False), (5, 'nan', False)]:
+    states = {'sensor.temperature_chambre': '20',
+              'sensor.temperature_chambre_last_seen': (night - timedelta(seconds=age)).isoformat(),
+              'sensor.ecodan_cnrf_proxy_override_timeout': timeout}
+    context = dict(now=lambda: night, states=lambda entity: states[entity],
+                   state_attr=lambda *args: False, as_timestamp=timestamp)
+    actual = env.from_string(condition).render(**context).strip()
+    assert actual == str(expected), ('délai configurable', age, timeout, actual)
+print(f'Home Assistant: {len(cases) + 6} scénarios de templates OK')

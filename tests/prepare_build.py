@@ -1,4 +1,4 @@
-"""Copie de compilation avec identifiants factices, sans modifier secrets.yaml."""
+"""Create a build copy with dummy credentials without changing secrets.yaml."""
 import base64
 from pathlib import Path
 import secrets

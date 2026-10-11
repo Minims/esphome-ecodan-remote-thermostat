@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "esphome/core/hal.h"
 #include "esphome/components/uart/uart_component_esp_idf.h"
+#include "hal/uart_ll.h"
 
 namespace esphome::ecodan {
 
@@ -12,9 +13,10 @@ bool CnrfProxy::configure_port(unsigned index, uart::UARTComponent *component) {
   ports_[index] = static_cast<uart_port_t>(idf->get_hw_serial_number());
   auto port = ports_[index];
   if (port >= UART_NUM_MAX || !uart_is_driver_installed(port)) return false;
-  // ESPHome installe sans file d'événements ; le proxy reprend seul le pilote.
+  // ESPHome installs no event queue; the proxy takes exclusive ownership of the driver.
   if (uart_driver_delete(port) != ESP_OK) return false;
-  if (uart_driver_install(port, 512, 0, 32, &events_[index], 0) != ESP_OK) return false;
+  // One event per byte: leave room for errors when the RX buffer fills up.
+  if (uart_driver_install(port, 512, 0, EVENT_QUEUE_SIZE, &events_[index], 0) != ESP_OK) return false;
   uart_config_t config{};
   config.baud_rate = 2400;
   config.data_bits = UART_DATA_8_BITS;
@@ -24,13 +26,14 @@ bool CnrfProxy::configure_port(unsigned index, uart::UARTComponent *component) {
   config.source_clk = UART_SCLK_DEFAULT;
   return uart_param_config(port, &config) == ESP_OK &&
          uart_set_pin(port, pins_[index * 2], pins_[index * 2 + 1], UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) == ESP_OK &&
-         uart_set_rx_full_threshold(port, 120) == ESP_OK && uart_set_rx_timeout(port, 2) == ESP_OK;
+         uart_set_rx_full_threshold(port, 1) == ESP_OK && uart_set_rx_timeout(port, 2) == ESP_OK;
 }
 
 bool CnrfProxy::start(uart::UARTComponent *ftc, uart::UARTComponent *receiver) {
   if (!configure_port(0, ftc) || !configure_port(1, receiver)) return false;
   stopped_ = false;
-  if (xTaskCreate(task_entry, "cnrf_proxy", 6144, this, 2, nullptr) != pdPASS) {
+  // Share the UART ISR core to inspect the FIFO and RX buffer without concurrent transfers.
+  if (xTaskCreatePinnedToCore(task_entry, "cnrf_proxy", 6144, this, 2, nullptr, xPortGetCoreID()) != pdPASS) {
     stopped_ = true;
     return false;
   }
@@ -60,9 +63,11 @@ void CnrfProxy::disable() {
 CnrfProxyStatus CnrfProxy::status() {
   portENTER_CRITICAL(&mutex_);
   auto copy = status_;
+  const auto now = millis();
   copy.requested = override_.requested();
-  copy.effective = override_.effective(millis());
-  copy.remaining_ms = override_.remaining_ms(millis());
+  copy.effective = override_.effective(now);
+  copy.remaining_ms = override_.remaining_ms(now);
+  copy.override_timeout_ms = override_.timeout_ms();
   copy.target_temperature = override_.temperature();
   portEXIT_CRITICAL(&mutex_);
   return copy;
@@ -81,7 +86,7 @@ void CnrfProxy::fault(CnrfFrameRewriter &rewriter, CnrfProxyStatus &status, bool
 
 void CnrfProxy::handle_errors(unsigned index, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status) {
   uart_event_t event;
-  for (unsigned i = 0; i < 32 && xQueueReceive(events_[index], &event, 0) == pdTRUE; ++i) {
+  for (unsigned i = 0; i < EVENT_QUEUE_SIZE && xQueueReceive(events_[index], &event, 0) == pdTRUE; ++i) {
     if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL)
       fault(rewriter, status, true);
     else if (event.type == UART_PARITY_ERR || event.type == UART_FRAME_ERR || event.type == UART_BREAK)
@@ -91,7 +96,7 @@ void CnrfProxy::handle_errors(unsigned index, CnrfFrameRewriter &rewriter, CnrfP
 
 void CnrfProxy::transmit(unsigned index, ByteQueue &queue, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status) {
   if (!queue.size()) return;
-  // Sans tampon TX IDF, tx_chars remplit seulement la FIFO disponible et ne bloque pas.
+  // Without an IDF TX buffer, tx_chars writes only what fits in the FIFO without waiting.
   int written = uart_tx_chars(ports_[index], reinterpret_cast<const char *>(queue.data()), std::min<std::size_t>(32, queue.contiguous_size()));
   if (written < 0) { fault(rewriter, status); return; }
   queue.consume(written);
@@ -127,8 +132,8 @@ void CnrfProxy::run() {
       if (count == 0) break;
       handle_errors(0, rewriter, local);
       handle_errors(1, rewriter, local);
-      const auto now = millis();
       portENTER_CRITICAL(&mutex_);
+      const auto now = millis();
       if (generation != disable_generation_) {
         generation = disable_generation_;
         rewriter.invalidate();
@@ -143,14 +148,20 @@ void CnrfProxy::run() {
       local.receiver_seen = true;
     }
     if (to_ftc.free() >= 22) {
-      const auto now = millis();
+      CnrfFrameRewriter::Output out;
+      size_t buffered = 0;
       portENTER_CRITICAL(&mutex_);
+      const auto now = millis();
       if (generation != disable_generation_) {
         generation = disable_generation_;
         rewriter.invalidate();
       }
-      auto out = rewriter.tick(now, override_.effective(now));
+      const auto enabled = override_.effective(now);
+      const auto result = uart_get_buffered_data_len(ports_[1], &buffered);
+      if (result == ESP_OK && buffered == 0 && uart_ll_get_rxfifo_len(UART_LL_GET_HW(ports_[1])) == 0)
+        out = rewriter.tick(now, enabled);
       portEXIT_CRITICAL(&mutex_);
+      if (result != ESP_OK) fault(rewriter, local);
       if (!to_ftc.push(out.bytes.data(), out.size)) fault(rewriter, local, true);
     }
     local.valid_frames = rewriter.temperature_frames();

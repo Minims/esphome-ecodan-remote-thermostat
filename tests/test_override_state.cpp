@@ -20,7 +20,7 @@ int main() {
   assert(state.accept(16.3F, 570000, 31000));
   assert(state.effective(60999));
   assert(!state.effective(61000));
-  assert(!state.effective(31000)); // un tour de millis ne réactive rien
+  assert(!state.effective(31000)); // A millis wrap must not reactivate an expired override.
   assert(state.remaining_ms(31000) == 0);
   assert(state.accept(10, 0, UINT32_MAX - 100));
   assert(state.effective(200));

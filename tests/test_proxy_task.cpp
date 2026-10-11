@@ -69,7 +69,7 @@ int main() {
   bytes = output(0);
   assert(std::equal(frame.begin(), frame.end(), bytes.begin() + before_disable_race));
   assert(!proxy.status().effective);
-  // 1 000 trames dans chaque sens, émission partielle et snapshots concurrents.
+  // 1,000 frames in each direction, partial writes and concurrent status snapshots.
   const auto before_bulk_ftc = output(0).size();
   const auto before_bulk_receiver = output(1).size();
   std::vector<uint8_t> bulk;
@@ -80,7 +80,7 @@ int main() {
   }
   feed(0, bulk); feed(1, bulk);
   await([&] { return output(1).size() == before_bulk_receiver + bulk.size(); });
-  assert(output(0).size() == before_bulk_ftc); // l'autre sens avance même si TX FTC ne progresse pas
+  assert(output(0).size() == before_bulk_ftc); // The reverse direction progresses even when FTC TX stalls.
   {
     std::lock_guard<std::mutex> lock(fake_ports[0].mutex);
     fake_ports[0].write_limit = 7;

@@ -15,7 +15,8 @@ class CnrfFrameRewriter {
   explicit CnrfFrameRewriter(std::uint8_t controller = 1) : controller_(controller) {}
 
   Output process(std::uint8_t input, std::uint32_t now, bool enabled, float temperature) {
-    Output out = tick(now, enabled);
+    Output out;
+    if (!enabled) invalidate();
     last_byte_ = now;
     if (quarantine_) {
       out.bytes[out.size++] = input;
@@ -40,7 +41,7 @@ class CnrfFrameRewriter {
     if (index == 1 && input != 0x48) candidate_ = false;
     if (!alternate_header_ && ((index == 2 && input != 0x04) || (index == 3 && input != 0x03))) {
       candidate_ = false;
-      // Entête incohérent : aucun FC contenu n'est fiable avant un silence.
+      // Malformed header: do not trust embedded FC bytes until an idle gap.
       quarantine_ = true;
     }
     if (!alternate_header_ && index == 4) {
@@ -86,6 +87,7 @@ class CnrfFrameRewriter {
   }
 
   Output tick(std::uint32_t now, bool enabled) {
+    // The caller must verify that both the FIFO and RX buffer are empty.
     Output out;
     if (!enabled) invalidate();
     if ((count_ != 0 || quarantine_) && static_cast<std::uint32_t>(now - last_byte_) >= 20) {

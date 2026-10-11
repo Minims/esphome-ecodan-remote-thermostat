@@ -1,4 +1,4 @@
-# ESPHome 2026.9.1. Copier secrets.example.yaml vers secrets.yaml et renseigner les valeurs.
+# ESPHome 2026.9.1. Copy secrets.example.yaml to secrets.yaml and fill in the values.
 # FTC CNRF -> Asgard HP -> Asgard SL -> PAR-WR61R-E.
 esphome:
   name: ecodan-cnrf-proxy
@@ -7,7 +7,7 @@ esphome:
 
 esp32:
   board: esp32-s3-devkitc-1
-  flash_size: 4MB  # Taille de partition prudente ; identifier la flash avant téléversement.
+  flash_size: 4MB  # Conservative partition size; identify the flash capacity before uploading.
   framework:
     type: esp-idf
 
@@ -110,7 +110,7 @@ number:
 
 button:
   - platform: template
-    name: Appliquer pour 10 minutes
+    name: Appliquer la température
     web_server:
       sorting_group_id: commande
       sorting_weight: 20
@@ -156,6 +156,15 @@ text_sensor:
       return {"Transmission de la mesure du thermostat"};
 
 sensor:
+  - platform: template
+    name: Durée maximale de la mesure
+    unit_of_measurement: s
+    accuracy_decimals: 3
+    update_interval: 2s
+    entity_category: diagnostic
+    lambda: return id(ecodan_instance).get_proxy_status().override_timeout_ms / 1000.0f;
+    web_server:
+      sorting_group_id: mesures
   - platform: template
     name: Dernière température du thermostat
     unit_of_measurement: °C

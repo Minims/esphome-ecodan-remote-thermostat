@@ -20,7 +20,7 @@ struct CnrfProxyStatus {
   uint32_t ftc_bytes{0}, receiver_bytes{0}, ftc_tx_bytes{0}, receiver_tx_bytes{0};
   uint32_t ftc_last_rx{0}, receiver_last_rx{0};
   uint32_t valid_frames{0}, modified_frames{0}, invalid_frames{0};
-  uint32_t uart_errors{0}, overflows{0}, remaining_ms{0};
+  uint32_t uart_errors{0}, overflows{0}, remaining_ms{0}, override_timeout_ms{0};
   float target_temperature{NAN}, original_temperature{NAN}, output_temperature{NAN};
 };
 
@@ -39,6 +39,7 @@ class CnrfProxy {
   CnrfProxyStatus status();
 
  private:
+  static constexpr unsigned EVENT_QUEUE_SIZE = 544;
   static void task_entry(void *self) { static_cast<CnrfProxy *>(self)->run(); }
   void run();
   bool configure_port(unsigned index, uart::UARTComponent *component);

@@ -90,9 +90,27 @@ ecodan:
   proxy_uart_id: uart_receiver
   proxy_mode: true
   proxy_controller: 1
-  proxy_override_timeout: 10min
 
 number:
+  - platform: template
+    id: proxy_override_timeout
+    name: Durée maximale de la mesure
+    unit_of_measurement: s
+    min_value: 1
+    max_value: 2073600
+    step: 1
+    initial_value: 600
+    restore_value: true
+    optimistic: true
+    mode: box
+    entity_category: config
+    on_value:
+      - lambda: |-
+          if (!id(ecodan_instance).set_proxy_override_timeout(x))
+            ESP_LOGW("cnrf", "Durée refusée : valeur invalide ou mode proxy désactivé");
+    web_server:
+      sorting_group_id: commande
+      sorting_weight: 40
   - platform: template
     id: manual_temperature
     name: Température manuelle à appliquer
@@ -156,15 +174,6 @@ text_sensor:
       return {"Transmission de la mesure du thermostat"};
 
 sensor:
-  - platform: template
-    name: Durée maximale de la mesure
-    unit_of_measurement: s
-    accuracy_decimals: 3
-    update_interval: 2s
-    entity_category: diagnostic
-    lambda: return id(ecodan_instance).get_proxy_status().override_timeout_ms / 1000.0f;
-    web_server:
-      sorting_group_id: mesures
   - platform: template
     name: Dernière température du thermostat
     unit_of_measurement: °C

@@ -23,11 +23,11 @@ blueprint:
             device_class: temperature
     timeout_sensor:
       name: Durée maximale de la mesure
-      description: Entité ESPHome « Durée maximale de la mesure », en secondes.
+      description: Réglage ESPHome « Durée maximale de la mesure », en secondes, modifiable depuis HA ou le web ESPHome.
       selector:
         entity:
           filter:
-            domain: sensor
+            domain: number
             integration: esphome
     start_time:
       name: Début de la plage

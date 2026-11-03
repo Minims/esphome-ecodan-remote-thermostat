@@ -10,6 +10,7 @@ class CnrfFrameRewriter {
   struct Output {
     std::array<std::uint8_t, 22> bytes{};
     std::size_t size{0};
+    std::uint8_t original_temperature{0xff};
   };
 
   explicit CnrfFrameRewriter(std::uint8_t controller = 1) : controller_(controller) {}
@@ -69,6 +70,7 @@ class CnrfFrameRewriter {
             if (eligible_ && original != 0xff) {
               const auto replacement = encode_temperature(target_);
               if (replacement != original) {
+                out.original_temperature = original;
                 frame_[position] = replacement;
                 frame_[21] = static_cast<std::uint8_t>(frame_[21] + original - replacement);
                 ++modified_frames_;

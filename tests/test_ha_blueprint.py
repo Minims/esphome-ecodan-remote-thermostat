@@ -10,7 +10,7 @@ import yaml
 
 inputs = {
     'temperature_sensor': 'sensor.bedroom',
-    'timeout_sensor': 'sensor.proxy_timeout',
+    'timeout_sensor': 'number.proxy_timeout',
     'start_time': '22:30:00',
     'end_time': '07:00:00',
     'override_action': 'esphome.custom_cnrf_override',
@@ -75,7 +75,7 @@ cases = [
     {'name': 'sonde absente', 'missing': True, 'expected': False},
     {'name': 'horodatage futur', 'age': -1, 'expected': False},
     {'name': 'température restaurée', 'restored': 'sensor.bedroom', 'expected': False},
-    {'name': 'délai restauré', 'restored': 'sensor.proxy_timeout', 'expected': False},
+    {'name': 'délai restauré', 'restored': 'number.proxy_timeout', 'expected': False},
     {'name': 'retour 7 h', 'now': night.replace(hour=7), 'expected': False},
     {'name': 'début 22 h 30', 'now': night.replace(hour=22, minute=30)},
     {'name': 'avant début', 'now': night.replace(hour=22, minute=29, second=59), 'expected': False},
@@ -98,7 +98,7 @@ for case in cases:
     age = case.get('age', 5)
     stamp = (now - timedelta(seconds=age)).isoformat()
     states = {'sensor.bedroom': case.get('temperature', '16.5'),
-              'sensor.proxy_timeout': case.get('timeout', '600')}
+              'number.proxy_timeout': case.get('timeout', '600')}
     sensor_states = SensorStates({entity: SimpleNamespace(state=value) for entity, value in states.items()})
     sensor_states['sensor.bedroom'].last_updated = datetime.fromisoformat(stamp)
     sensor_states['sensor.bedroom'].last_changed = now - timedelta(days=1)
@@ -123,6 +123,7 @@ assert blueprint['actions'][1]['default'][0]['action'] == inputs['disable_action
 assert blueprint['triggers'][-1]['entity_id'] == [inputs[key] for key in
                                                 ('temperature_sensor', 'timeout_sensor')]
 assert 'timestamp_sensor' not in blueprint['blueprint']['input']
+assert blueprint['blueprint']['input']['timeout_sensor']['selector']['entity']['filter']['domain'] == 'number'
 assert [trigger['at'] for trigger in blueprint['triggers'] if trigger['trigger'] == 'time'] == [
     inputs['start_time'], inputs['end_time']]
 print(f'Blueprint CNRF : {len(cases)} scénarios de templates OK')

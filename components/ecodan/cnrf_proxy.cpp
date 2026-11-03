@@ -57,6 +57,20 @@ bool CnrfProxy::apply(float temperature, int32_t sample_age_ms) {
   return accepted;
 }
 
+bool CnrfProxy::set_timeout(float timeout_seconds) {
+  if (!std::isfinite(timeout_seconds) || timeout_seconds < 1 || timeout_seconds > 2073600) return false;
+  const auto timeout_ms = static_cast<uint32_t>(timeout_seconds * 1000.0);
+  portENTER_CRITICAL(&mutex_);
+  if (timeout_ms != override_.timeout_ms()) {
+    override_.set_timeout(timeout_ms);
+    // A new limit must not extend an old measurement or a pending frame.
+    override_.disable();
+    ++override_generation_;
+  }
+  portEXIT_CRITICAL(&mutex_);
+  return true;
+}
+
 void CnrfProxy::disable() {
   portENTER_CRITICAL(&mutex_);
   override_.disable();
@@ -108,9 +122,31 @@ void CnrfProxy::transmit(unsigned index, ByteQueue &queue, CnrfFrameRewriter &re
   else status.receiver_tx_bytes += written;
 }
 
+void CnrfProxy::transmit_pending(PendingFrame &pending, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status) {
+  auto &out = pending.output;
+  if (!out.size) return;
+  portENTER_CRITICAL(&mutex_);
+  // Once any byte reaches the UART, preserve the whole frame and its checksum.
+  if (pending.sent == 0 && out.original_temperature != 0xff &&
+      (pending.generation != override_generation_ || !override_.effective(millis()))) {
+    const auto position = 5U + controller_;
+    out.bytes[21] = static_cast<uint8_t>(out.bytes[21] + out.bytes[position] - out.original_temperature);
+    out.bytes[position] = out.original_temperature;
+    out.original_temperature = 0xff;
+  }
+  const int written = uart_tx_chars(ports_[0], reinterpret_cast<const char *>(out.bytes.data() + pending.sent),
+                                   out.size - pending.sent);
+  portEXIT_CRITICAL(&mutex_);
+  if (written < 0) { fault(rewriter, status); return; }
+  status.ftc_tx_bytes += written;
+  pending.sent += written;
+  if (pending.sent == out.size) pending = {};
+}
+
 void CnrfProxy::run() {
   CnrfFrameRewriter rewriter(controller_);
   ByteQueue to_ftc, to_receiver;
+  PendingFrame pending;
   CnrfProxyStatus local;
   local.ready = true;
   uint32_t generation = 0;
@@ -118,6 +154,7 @@ void CnrfProxy::run() {
     handle_errors(0, rewriter, local);
     handle_errors(1, rewriter, local);
     transmit(0, to_ftc, rewriter, local);
+    if (!to_ftc.size()) transmit_pending(pending, rewriter, local);
     transmit(1, to_receiver, rewriter, local);
     for (unsigned i = 0; i < 32 && to_receiver.free(); ++i) {
       uint8_t byte;
@@ -129,7 +166,7 @@ void CnrfProxy::run() {
       local.ftc_last_rx = millis();
       local.ftc_seen = true;
     }
-    for (unsigned i = 0; i < 32 && to_ftc.free() >= 22; ++i) {
+    for (unsigned i = 0; i < 32 && !pending.output.size && to_ftc.free() >= 22; ++i) {
       uint8_t byte;
       int count = uart_read_bytes(ports_[1], &byte, 1, 0);
       if (count < 0) { fault(rewriter, local); break; }
@@ -145,13 +182,14 @@ void CnrfProxy::run() {
       const auto enabled = override_.effective(now);
       const auto temperature = override_.temperature();
       auto out = rewriter.process(byte, now, enabled, temperature);
+      if (out.original_temperature != 0xff) pending = {out, 0, generation};
       portEXIT_CRITICAL(&mutex_);
-      if (!to_ftc.push(out.bytes.data(), out.size)) fault(rewriter, local, true);
+      if (out.original_temperature == 0xff && !to_ftc.push(out.bytes.data(), out.size)) fault(rewriter, local, true);
       ++local.receiver_bytes;
       local.receiver_last_rx = now;
       local.receiver_seen = true;
     }
-    if (to_ftc.free() >= 22) {
+    if (!pending.output.size && to_ftc.free() >= 22) {
       CnrfFrameRewriter::Output out;
       size_t buffered = 0;
       portENTER_CRITICAL(&mutex_);

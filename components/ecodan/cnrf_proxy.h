@@ -35,10 +35,16 @@ class CnrfProxy {
   bool start(uart::UARTComponent *ftc, uart::UARTComponent *receiver);
   void stop();
   bool apply(float temperature, int32_t sample_age_ms);
+  bool set_timeout(float timeout_seconds);
   void disable();
   CnrfProxyStatus status();
 
  private:
+  struct PendingFrame {
+    CnrfFrameRewriter::Output output;
+    std::size_t sent{0};
+    uint32_t generation{0};
+  };
   static constexpr unsigned EVENT_QUEUE_SIZE = 544;
   static void task_entry(void *self) { static_cast<CnrfProxy *>(self)->run(); }
   void run();
@@ -46,6 +52,7 @@ class CnrfProxy {
   void handle_errors(unsigned index, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status);
   void fault(CnrfFrameRewriter &rewriter, CnrfProxyStatus &status, bool overflow = false);
   void transmit(unsigned index, ByteQueue &queue, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status);
+  void transmit_pending(PendingFrame &pending, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status);
 
   portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
   OverrideState override_;

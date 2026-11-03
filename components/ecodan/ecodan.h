@@ -39,6 +39,9 @@ namespace ecodan
             return proxy_mode_ && cnrf_proxy_.apply(temperature, sample_age_ms);
         }
         void disable_proxy_override() { cnrf_proxy_.disable(); }
+        bool set_proxy_override_timeout(float timeout_seconds) {
+            return proxy_mode_ && cnrf_proxy_.set_timeout(timeout_seconds);
+        }
         CnrfProxyStatus get_proxy_status() { return cnrf_proxy_.status(); }
         void on_shutdown() override { if (proxy_mode_) cnrf_proxy_.stop(); }
 #endif

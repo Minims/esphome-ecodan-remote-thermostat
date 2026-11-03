@@ -37,6 +37,17 @@ void run_case(const std::string &name) {
     port.write_limit = 32;
     port.fail_enable_interrupt = false;
   }
+  const bool queued_case = name == "queued_expiry" || name == "queued_disable" || name == "queued_replace" ||
+                           name == "queued_timeout" || name == "queued_fault" || name == "partial_expiry";
+  std::atomic<bool> resume_tx{false};
+  if (queued_case) {
+    fake_ports[0].write_limit = name == "partial_expiry" ? 7 : 0;
+    fake_task_delay_hook = [&] {
+      std::lock_guard<std::mutex> lock(fake_ports[0].mutex);
+      if (resume_tx) fake_ports[0].write_limit = 7;
+      else if (!fake_ports[0].tx.empty()) fake_ports[0].write_limit = 0;
+    };
+  }
   esphome::uart::IDFUARTComponent ftc(0), receiver(1);
   CnrfProxy proxy;
   proxy.configure(1, 39, 38, 7, 8, 900000);
@@ -51,7 +62,102 @@ void run_case(const std::string &name) {
   await([&] { return proxy.status().ready; });
   assert(proxy.status().override_timeout_ms == 900000);
 
-  if (name == "fifo") {
+  if (queued_case) {
+    assert(proxy.apply(16, 899950));
+    deliver(1, temperature_frame);
+    await([&] { return proxy.status().modified_frames == 1; });
+    if (name == "partial_expiry") {
+      await([&] { return output(0).size() == 7; });
+      cycle();
+    } else assert(output(0).empty());
+    if (name == "queued_disable") proxy.disable();
+    else if (name == "queued_replace") assert(proxy.apply(19, 0));
+    else if (name == "queued_timeout") assert(proxy.set_timeout(300));
+    else if (name == "queued_fault") {
+      {
+        std::lock_guard<std::mutex> lock(fake_ports[1].mutex);
+        fake_ports[1].events.push_back({UART_PARITY_ERR});
+      }
+      await([&] { return proxy.status().uart_fault; });
+    } else fake_now = 1050;
+    cycle();
+    if (name != "queued_replace") assert(!proxy.status().effective);
+    resume_tx = true;
+    await([&] { return output(0).size() == 22; });
+    auto expected = temperature_frame;
+    if (name == "partial_expiry") { expected[6] = 0xa0; expected[21] = 0x36; }
+    assert(output(0) == expected);
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 44; });
+    expected = temperature_frame;
+    if (name == "queued_replace") { expected[6] = 0xa6; expected[21] = 0x30; }
+    const auto bytes = output(0);
+    assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
+  } else if (name == "queued_order") {
+    assert(proxy.apply(16, 0));
+    {
+      std::lock_guard<std::mutex> lock(fake_ports[0].mutex);
+      fake_ports[0].write_limit = 0;
+    }
+    std::vector<uint8_t> stream{0x11, 0x12};
+    stream.insert(stream.end(), temperature_frame.begin(), temperature_frame.end());
+    stream.push_back(0x13);
+    stream.insert(stream.end(), temperature_frame.begin(), temperature_frame.end());
+    deliver(1, stream);
+    await([&] { return proxy.status().modified_frames == 1; });
+    proxy.disable();
+    {
+      std::lock_guard<std::mutex> lock(fake_ports[0].mutex);
+      fake_ports[0].write_limit = 1;
+    }
+    await([&] { return output(0).size() == stream.size(); });
+    assert(output(0) == stream);
+  } else if (name == "timeout_runtime") {
+    assert(proxy.apply(16, 0));
+    for (float invalid : {NAN, INFINITY, -1.0F, 0.0F, 0.5F, 2073601.0F}) {
+      assert(!proxy.set_timeout(invalid));
+      assert(proxy.status().override_timeout_ms == 900000);
+      assert(proxy.status().effective);
+    }
+    assert(proxy.set_timeout(900));
+    assert(proxy.status().effective);
+    assert(proxy.set_timeout(300));
+    assert(proxy.status().override_timeout_ms == 300000);
+    assert(!proxy.status().effective && !proxy.status().requested);
+    assert(!proxy.apply(16, 300000));
+    assert(proxy.apply(16, 299000));
+    fake_now = 1999;
+    assert(proxy.status().remaining_ms == 1);
+    fake_now = 2000;
+    assert(!proxy.status().effective);
+    assert(proxy.set_timeout(900));
+    assert(!proxy.status().effective);
+    assert(proxy.apply(16, 840000));
+    assert(proxy.status().remaining_ms == 60000);
+    assert(proxy.set_timeout(1));
+    assert(proxy.apply(16, 0));
+    assert(proxy.status().remaining_ms == 1000);
+    assert(proxy.set_timeout(2073600));
+    assert(proxy.apply(16, 2073599000));
+    assert(proxy.status().remaining_ms == 1000);
+  } else if (name == "timeout_pending") {
+    assert(proxy.apply(16, 0));
+    unsigned received = 0;
+    fake_read_hook = [&](int index, uint8_t) {
+      if (index != 1 || ++received != 11) return;
+      assert(proxy.set_timeout(300));
+      assert(proxy.apply(19, 0));
+    };
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 22; });
+    assert(output(0) == temperature_frame);
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 44; });
+    auto expected = temperature_frame;
+    expected[6] = 0xa6; expected[21] = 0x30;
+    const auto bytes = output(0);
+    assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
+  } else if (name == "fifo") {
     for (int index : {0, 1}) {
       std::lock_guard<std::mutex> lock(fake_ports[index].mutex);
       auto &port = fake_ports[index];
@@ -198,6 +304,8 @@ int main(int argc, char **argv) {
   if (argc == 2) run_case(argv[1]);
   else for (const auto &name : {"fifo", "delayed", "continuous", "idle", "queued_error", "race_byte", "race_idle",
                            "renew_expired", "replace_pending", "reject_pending", "frame_error_ftc",
-                           "frame_error_receiver", "interrupt_failure_ftc", "interrupt_failure_receiver"})
+                           "frame_error_receiver", "interrupt_failure_ftc", "interrupt_failure_receiver",
+                           "timeout_runtime", "timeout_pending", "queued_expiry", "queued_disable", "queued_replace",
+                           "queued_timeout", "queued_fault", "partial_expiry", "queued_order"})
     run_case(name);
 }

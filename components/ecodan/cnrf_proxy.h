@@ -50,7 +50,7 @@ class CnrfProxy {
   portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
   OverrideState override_;
   CnrfProxyStatus status_;
-  uint32_t disable_generation_{0};
+  uint32_t override_generation_{0};
   std::atomic<bool> stopping_{false}, stopped_{true};
   uart_port_t ports_[2]{UART_NUM_MAX, UART_NUM_MAX};
   QueueHandle_t events_[2]{nullptr, nullptr};

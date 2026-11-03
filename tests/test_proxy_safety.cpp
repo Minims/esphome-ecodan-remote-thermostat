@@ -35,10 +35,18 @@ void run_case(const std::string &name) {
   for (auto &port : fake_ports) {
     port.rx.clear(); port.fifo.clear(); port.tx.clear(); port.events.clear();
     port.write_limit = 32;
+    port.fail_enable_interrupt = false;
   }
   esphome::uart::IDFUARTComponent ftc(0), receiver(1);
   CnrfProxy proxy;
   proxy.configure(1, 39, 38, 7, 8, 900000);
+  if (name == "interrupt_failure_ftc" || name == "interrupt_failure_receiver") {
+    fake_ports[name == "interrupt_failure_ftc" ? 0 : 1].fail_enable_interrupt = true;
+    assert(!proxy.start(&ftc, &receiver));
+    assert(!proxy.status().ready && !proxy.apply(16, 0));
+    std::cout << "Proxy regression: " << name << " OK\n";
+    return;
+  }
   assert(proxy.start(&ftc, &receiver));
   await([&] { return proxy.status().ready; });
   assert(proxy.status().override_timeout_ms == 900000);
@@ -112,6 +120,38 @@ void run_case(const std::string &name) {
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 32; });
     assert(proxy.status().modified_frames == 1);
+  } else if (name == "renew_expired" || name == "replace_pending" || name == "reject_pending") {
+    assert(proxy.apply(16, name == "renew_expired" ? 899950 : 0));
+    unsigned received = 0;
+    fake_read_hook = [&](int index, uint8_t) {
+      if (index != 1 || ++received != 11) return;
+      fake_now = 1060;
+      if (name == "reject_pending") assert(!proxy.apply(NAN, 0));
+      else assert(proxy.apply(19, 0));
+    };
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 22; });
+    auto expected = temperature_frame;
+    if (name == "reject_pending") { expected[6] = 0xa0; expected[21] = 0x36; }
+    assert(output(0) == expected);
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 44; });
+    if (name != "reject_pending") { expected[6] = 0xa6; expected[21] = 0x30; }
+    const auto bytes = output(0);
+    assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
+  } else if (name == "frame_error_ftc" || name == "frame_error_receiver") {
+    assert(proxy.apply(16, 0));
+    deliver(1, {temperature_frame.begin(), temperature_frame.end() - 1});
+    await([&] { return proxy.status().receiver_bytes == 21; });
+    {
+      auto &port = fake_ports[name == "frame_error_ftc" ? 0 : 1];
+      std::lock_guard<std::mutex> lock(port.mutex);
+      if (port.interrupt_mask & UART_INTR_FRAM_ERR) port.events.push_back({UART_FRAME_ERR});
+    }
+    deliver(1, {temperature_frame.back()});
+    await([&] { return output(0).size() == 22; });
+    assert(output(0) == temperature_frame);
+    assert(proxy.status().uart_fault && !proxy.status().effective);
   } else if (name == "queued_error") {
     assert(proxy.apply(16, 0));
     deliver(1, {temperature_frame.begin(), temperature_frame.end() - 1});
@@ -156,6 +196,8 @@ void run_case(const std::string &name) {
 
 int main(int argc, char **argv) {
   if (argc == 2) run_case(argv[1]);
-  else for (const auto &name : {"fifo", "delayed", "continuous", "idle", "queued_error", "race_byte", "race_idle"})
+  else for (const auto &name : {"fifo", "delayed", "continuous", "idle", "queued_error", "race_byte", "race_idle",
+                           "renew_expired", "replace_pending", "reject_pending", "frame_error_ftc",
+                           "frame_error_receiver", "interrupt_failure_ftc", "interrupt_failure_receiver"})
     run_case(name);
 }

@@ -26,7 +26,8 @@ bool CnrfProxy::configure_port(unsigned index, uart::UARTComponent *component) {
   config.source_clk = UART_SCLK_DEFAULT;
   return uart_param_config(port, &config) == ESP_OK &&
          uart_set_pin(port, pins_[index * 2], pins_[index * 2 + 1], UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) == ESP_OK &&
-         uart_set_rx_full_threshold(port, 1) == ESP_OK && uart_set_rx_timeout(port, 2) == ESP_OK;
+         uart_set_rx_full_threshold(port, 1) == ESP_OK && uart_set_rx_timeout(port, 2) == ESP_OK &&
+         uart_enable_intr_mask(port, UART_INTR_FRAM_ERR) == ESP_OK;
 }
 
 bool CnrfProxy::start(uart::UARTComponent *ftc, uart::UARTComponent *receiver) {
@@ -48,7 +49,10 @@ void CnrfProxy::stop() {
 bool CnrfProxy::apply(float temperature, int32_t sample_age_ms) {
   portENTER_CRITICAL(&mutex_);
   bool accepted = status_.ready && override_.accept(temperature, sample_age_ms, millis());
-  if (accepted) status_.uart_fault = false;
+  if (accepted) {
+    status_.uart_fault = false;
+    ++override_generation_;
+  }
   portEXIT_CRITICAL(&mutex_);
   return accepted;
 }
@@ -56,7 +60,7 @@ bool CnrfProxy::apply(float temperature, int32_t sample_age_ms) {
 void CnrfProxy::disable() {
   portENTER_CRITICAL(&mutex_);
   override_.disable();
-  ++disable_generation_;
+  ++override_generation_;
   portEXIT_CRITICAL(&mutex_);
 }
 
@@ -79,7 +83,7 @@ void CnrfProxy::fault(CnrfFrameRewriter &rewriter, CnrfProxyStatus &status, bool
   if (overflow) ++status.overflows;
   portENTER_CRITICAL(&mutex_);
   override_.disable();
-  ++disable_generation_;
+  ++override_generation_;
   status_.uart_fault = true;
   portEXIT_CRITICAL(&mutex_);
 }
@@ -134,8 +138,8 @@ void CnrfProxy::run() {
       handle_errors(1, rewriter, local);
       portENTER_CRITICAL(&mutex_);
       const auto now = millis();
-      if (generation != disable_generation_) {
-        generation = disable_generation_;
+      if (generation != override_generation_) {
+        generation = override_generation_;
         rewriter.invalidate();
       }
       const auto enabled = override_.effective(now);
@@ -152,8 +156,8 @@ void CnrfProxy::run() {
       size_t buffered = 0;
       portENTER_CRITICAL(&mutex_);
       const auto now = millis();
-      if (generation != disable_generation_) {
-        generation = disable_generation_;
+      if (generation != override_generation_) {
+        generation = override_generation_;
         rewriter.invalidate();
       }
       const auto enabled = override_.effective(now);

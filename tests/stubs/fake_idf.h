@@ -49,6 +49,7 @@ constexpr int UART_NUM_MAX = 3, ESP_OK = 0;
 constexpr int UART_DATA_8_BITS = 8, UART_PARITY_EVEN = 2, UART_STOP_BITS_1 = 1;
 constexpr int UART_HW_FLOWCTRL_DISABLE = 0, UART_SCLK_DEFAULT = 0, UART_PIN_NO_CHANGE = -1;
 constexpr int UART_FIFO_OVF = 1, UART_BUFFER_FULL = 2, UART_PARITY_ERR = 3, UART_FRAME_ERR = 4, UART_BREAK = 5;
+constexpr uint32_t UART_INTR_FRAM_ERR = 1U << 3;
 struct uart_config_t { int baud_rate, data_bits, parity, stop_bits, flow_ctrl, source_clk; };
 struct uart_event_t { int type; };
 struct FakePort {
@@ -60,6 +61,8 @@ struct FakePort {
   int write_limit = 32;
   int rx_threshold = 120;
   bool fail_next_read = false;
+  uint32_t interrupt_mask = 0;
+  bool fail_enable_interrupt = false;
 };
 inline FakePort fake_ports[2];
 inline std::function<void(int, uint8_t)> fake_read_hook;
@@ -67,6 +70,7 @@ using QueueHandle_t = FakePort *;
 inline bool uart_is_driver_installed(int) { return true; }
 inline int uart_driver_delete(int) { return ESP_OK; }
 inline int uart_driver_install(int port, int, int, int, QueueHandle_t *queue, int) {
+  fake_ports[port].interrupt_mask = 0;
   *queue = &fake_ports[port]; return ESP_OK;
 }
 inline int uart_param_config(int, const uart_config_t *) { return ESP_OK; }
@@ -76,6 +80,11 @@ inline int uart_set_rx_full_threshold(int index, int threshold) {
   return ESP_OK;
 }
 inline int uart_set_rx_timeout(int, int) { return ESP_OK; }
+inline int uart_enable_intr_mask(int index, uint32_t mask) {
+  if (fake_ports[index].fail_enable_interrupt) return -1;
+  fake_ports[index].interrupt_mask |= mask;
+  return ESP_OK;
+}
 inline int uart_get_buffered_data_len(int index, size_t *size) {
   std::lock_guard<std::mutex> lock(fake_ports[index].mutex);
   *size = fake_ports[index].rx.size();

@@ -48,6 +48,35 @@ Une nouvelle mesure acceptée annule le remplacement prévu pour une trame encor
 
 Avec le nom de nœud fourni, les actions HA sont normalement `esphome.ecodan_cnrf_proxy_cnrf_override` et `esphome.ecodan_cnrf_proxy_cnrf_disable` : vérifier leur nom dans les outils de développement après ajout de l’intégration ESPHome. L’exemple [home_assistant_package.example.yaml](../home_assistant_package.example.yaml) garde les noms de scripts `cnrf_proxy_temperature_chambre` et `cnrf_proxy_retour_salon`.
 
+### Blueprint Home Assistant
+
+Cliquer sur le bouton pour ouvrir l'import du blueprint dans votre instance :
+
+[![Importer dans My Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FMinims%2Fesphome-ecodan-remote-thermostat%2Fblob%2Fcnrf-proxy-asgard%2Fblueprints%2Fautomation%2Fecodan%2Fcnrf_proxy.yaml)
+
+L'import utilise le fichier publié sur la branche `cnrf-proxy-asgard` du dépôt Minims.
+Voir le [fonctionnement du bouton My Home Assistant](https://contributors.home-assistant.io/marketplace/guides/blueprints/).
+
+Pour une installation manuelle, copier [cnrf_proxy.yaml](../blueprints/automation/ecodan/cnrf_proxy.yaml) dans
+`/config/blueprints/automation/ecodan/cnrf_proxy.yaml` de Home Assistant (2024.10.0 minimum).
+Recharger les blueprints depuis **Paramètres → Automatisations et scènes → Blueprints**,
+puis créer une automatisation à partir de **PAC - Sonde externe via proxy CNRF**.
+Sélectionner la sonde en °C, le capteur d'horodatage de sa mesure physique et l'entité
+ESPHome **Durée maximale de la mesure** en secondes. Adapter les deux noms d'actions
+ESPHome si le nœud a été renommé. Aucun script du package n'est nécessaire.
+
+La plage par défaut est **22 h 30–7 h**, modifiable dans le formulaire ; une plage
+de jour fonctionne aussi et des heures identiques désactivent le remplacement.
+Le blueprint réévalue la mesure aux bornes de la plage, au démarrage HA, aux
+changements des trois capteurs et chaque minute. Hors plage ou si les données
+sont invalides, futures, restaurées ou périmées, il demande le retour au thermostat.
+Il transmet l'âge réel de la mesure au firmware sans le remettre à zéro.
+Désactiver l'ancienne automatisation du package avant d'activer celle du blueprint,
+et n'utiliser qu'une automatisation pour un même proxy afin d'éviter des commandes concurrentes.
+Si HA est arrêté ou le proxy inaccessible, l'expiration locale du firmware reste applicable.
+
+### Ancien exemple sous forme de package
+
 La plage exemple est **22 h 30–7 h**, avec déclencheurs aux bornes, au démarrage HA, aux changements de mesure/horodatage et toutes les minutes. Remplacer les deux identifiants `sensor.temperature_chambre` et `sensor.temperature_chambre_last_seen`. Le second est un placeholder : il doit dater la mesure physique correspondant à la valeur du premier. Une température stable peut être fraîche. `last_changed`, `now()` et le simple renvoi d’un cache ne prouvent pas une nouvelle mesure. Les états marqués `restored`, horodatages absents/futurs et données périmées sont refusés par l’exemple.
 
 Adapter aussi `sensor.ecodan_cnrf_proxy_override_timeout` à l’entité ESPHome **Durée maximale de la mesure**, en secondes, ou renommer cette entité dans HA. Ce délai provient de `proxy_override_timeout` : il n’est plus recopié dans l’automatisation. Son changement déclenche une réévaluation ; s’il est absent, invalide ou restauré, l’exemple demande le retour au thermostat. Le bouton web renommé peut nécessiter l’adaptation d’une automatisation qui utilisait son ancien identifiant.
@@ -76,6 +105,7 @@ Depuis le clone, dans l’environnement Python d’ESPHome :
 sh tests/run_native.sh
 python tests/test_config.py
 python tests/test_ha_templates.py
+python tests/test_ha_blueprint.py
 ```
 
 Les tests natifs utilisent AddressSanitizer et UndefinedBehaviorSanitizer. Ils couvrent le checksum, RC1/RC2, la plage et l’arrondi, une sonde absente, les entêtes inconnues, les troncatures, l’expiration, le débordement de `millis()`, les files et les écritures partielles. La tâche de production est aussi exécutée contre un simulateur des pilotes IDF : **1 000 trames dans chaque sens**, TX bloqué, erreurs UART, reprise explicite et absence de rafraîchissement sur entrée invalide. Cela ne simule ni les fronts électriques ni la charge réseau réelle.

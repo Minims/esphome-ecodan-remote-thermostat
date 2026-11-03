@@ -1,0 +1,112 @@
+blueprint:
+  name: PAC - Sonde externe via proxy CNRF
+  description: >-
+    Remplace la mesure RC1 pendant la plage choisie (22 h 30–7 h par défaut).
+    Hors plage ou si la mesure est invalide ou périmée, revient au thermostat.
+    L'horodatage doit correspondre à la mesure physique, même si sa valeur reste
+    stable : ne pas utiliser last_changed, now() ou le renvoi d'un cache.
+    Désactiver l'ancienne automatisation avant d'activer celle-ci.
+  domain: automation
+  source_url: https://github.com/Minims/esphome-ecodan-remote-thermostat/blob/cnrf-proxy-asgard/blueprints/automation/ecodan/cnrf_proxy.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    temperature_sensor:
+      name: Sonde de température
+      description: Mesure en degrés Celsius, comprise entre 10 et 30 °C.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: temperature
+    timestamp_sensor:
+      name: Horodatage de la mesure
+      description: Capteur contenant la date ISO 8601 de la mesure physique correspondante.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+    timeout_sensor:
+      name: Durée maximale de la mesure
+      description: Entité ESPHome « Durée maximale de la mesure », en secondes.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            integration: esphome
+    start_time:
+      name: Début de la plage
+      default: "22:30:00"
+      selector:
+        time: {}
+    end_time:
+      name: Fin de la plage
+      description: La plage peut traverser minuit. Des heures identiques désactivent le remplacement.
+      default: "07:00:00"
+      selector:
+        time: {}
+    override_action:
+      name: Action ESPHome de remplacement
+      description: Vérifier le nom dans les outils de développement si le nœud a été renommé.
+      default: esphome.ecodan_cnrf_proxy_cnrf_override
+      selector:
+        text: {}
+    disable_action:
+      name: Action ESPHome de retour au thermostat
+      default: esphome.ecodan_cnrf_proxy_cnrf_disable
+      selector:
+        text: {}
+
+mode: restart
+
+variables:
+  temperature_sensor: !input temperature_sensor
+  timestamp_sensor: !input timestamp_sensor
+  timeout_sensor: !input timeout_sensor
+  start_time: !input start_time
+  end_time: !input end_time
+
+triggers:
+  - trigger: time_pattern
+    minutes: "/1"
+  - trigger: time
+    at: !input start_time
+  - trigger: time
+    at: !input end_time
+  - trigger: homeassistant
+    event: start
+  - trigger: state
+    entity_id:
+      - !input temperature_sensor
+      - !input timestamp_sensor
+      - !input timeout_sensor
+
+actions:
+  - variables:
+      sample_temperature: "{{ states(temperature_sensor) }}"
+      sample_timestamp: "{{ states(timestamp_sensor) }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >-
+              {% set clock = now().strftime('%H:%M:%S') %}
+              {% set in_window = (start_time <= clock < end_time) if start_time < end_time
+                 else (clock >= start_time or clock < end_time) if start_time > end_time else false %}
+              {% set stamp = as_timestamp(sample_timestamp, none) %}
+              {% set timeout = states(timeout_sensor) %}
+              {{ in_window
+                 and sample_temperature | is_number and 10 <= sample_temperature | float <= 30
+                 and timeout | is_number and timeout | float > 0
+                 and stamp is not none and 0 <= as_timestamp(now()) - stamp < timeout | float
+                 and not state_attr(temperature_sensor, 'restored')
+                 and not state_attr(timestamp_sensor, 'restored')
+                 and not state_attr(timeout_sensor, 'restored') }}
+        sequence:
+          - action: !input override_action
+            data:
+              temperature: "{{ sample_temperature | float }}"
+              sample_age_ms: >-
+                {{ ((as_timestamp(now()) - as_timestamp(sample_timestamp, 0)) * 1000)
+                   | round(0, 'ceil') | int }}
+    default:
+      - action: !input disable_action

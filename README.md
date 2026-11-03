@@ -7,7 +7,7 @@ Le mode `proxy_mode: true` conserve le récepteur officiel `PAR-WR61R-E` et perm
 
 Voir le [guide du proxy et sa recette](docs/cnrf-proxy.md). Le montage reste expérimental : tests logiciels et compilation ne valident pas les niveaux électriques ni la latence acceptée par la PAC. Le fichier `ecodan-remote-thermostat-esphome.yaml` ci-dessous reste la configuration d’émulation amont.
 
-Pour Home Assistant, utiliser le [blueprint CNRF](blueprints/automation/ecodan/cnrf_proxy.yaml) et ses [instructions d'installation](docs/cnrf-proxy.md#blueprint-home-assistant) : sonde, horodatage et horaires se choisissent dans le formulaire.
+Pour Home Assistant, utiliser le [blueprint CNRF](blueprints/automation/ecodan/cnrf_proxy.yaml) et ses [instructions d'installation](docs/cnrf-proxy.md#blueprint-home-assistant) : sonde et horaires se choisissent dans le formulaire, la date de mise à jour est lue directement sur la sonde.
 
 [![Importer dans My Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FMinims%2Fesphome-ecodan-remote-thermostat%2Fblob%2Fcnrf-proxy-asgard%2Fblueprints%2Fautomation%2Fecodan%2Fcnrf_proxy.yaml)
 

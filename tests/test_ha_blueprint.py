@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import jinja2
 import yaml
@@ -9,7 +10,6 @@ import yaml
 
 inputs = {
     'temperature_sensor': 'sensor.bedroom',
-    'timestamp_sensor': 'sensor.bedroom_last_seen',
     'timeout_sensor': 'sensor.proxy_timeout',
     'start_time': '22:30:00',
     'end_time': '07:00:00',
@@ -29,6 +29,15 @@ choice = blueprint['actions'][1]['choose'][0]
 condition = choice['conditions'][0]['value_template']
 payload = choice['sequence'][0]['data']
 env = jinja2.Environment()
+
+
+class SensorStates(dict):
+    def __call__(self, entity):
+        sensor = self.get(entity)
+        return sensor.state if sensor is not None else 'unknown'
+
+    def __getitem__(self, entity):
+        return self.get(entity)
 
 
 def is_number(value):
@@ -51,8 +60,9 @@ env.filters['is_number'] = is_number
 night = datetime(2026, 11, 3, 23, tzinfo=timezone.utc)
 # Freshness boundaries, invalid data, both schedule shapes and equal hours.
 cases = [
-    {'name': 'stable fraîche'},
+    {'name': 'valeur stable avec attribut mis à jour'},
     {'name': 'expiration', 'age': 600, 'expected': False},
+    {'name': 'rapport identique sans mise à jour', 'age': 700, 'expected': False},
     {'name': 'arrondi conservateur', 'age': 1.0001},
     {'name': 'unknown', 'temperature': 'unknown', 'expected': False},
     {'name': 'unavailable', 'temperature': 'unavailable', 'expected': False},
@@ -62,10 +72,9 @@ cases = [
     {'name': 'borne haute', 'temperature': '30'},
     {'name': 'sous la plage', 'temperature': '9.9', 'expected': False},
     {'name': 'hors plage', 'temperature': '30.1', 'expected': False},
-    {'name': 'horodatage absent', 'age': None, 'expected': False},
+    {'name': 'sonde absente', 'missing': True, 'expected': False},
     {'name': 'horodatage futur', 'age': -1, 'expected': False},
     {'name': 'température restaurée', 'restored': 'sensor.bedroom', 'expected': False},
-    {'name': 'date restaurée', 'restored': 'sensor.bedroom_last_seen', 'expected': False},
     {'name': 'délai restauré', 'restored': 'sensor.proxy_timeout', 'expected': False},
     {'name': 'retour 7 h', 'now': night.replace(hour=7), 'expected': False},
     {'name': 'début 22 h 30', 'now': night.replace(hour=22, minute=30)},
@@ -87,10 +96,16 @@ cases = [
 for case in cases:
     now = case.get('now', night)
     age = case.get('age', 5)
-    stamp = (now - timedelta(seconds=age)).isoformat() if age is not None else 'unknown'
+    stamp = (now - timedelta(seconds=age)).isoformat()
     states = {'sensor.bedroom': case.get('temperature', '16.5'),
-              'sensor.bedroom_last_seen': stamp, 'sensor.proxy_timeout': case.get('timeout', '600')}
-    context = dict(inputs, now=lambda: now, states=lambda entity: states[entity],
+              'sensor.proxy_timeout': case.get('timeout', '600')}
+    sensor_states = SensorStates({entity: SimpleNamespace(state=value) for entity, value in states.items()})
+    sensor_states['sensor.bedroom'].last_updated = datetime.fromisoformat(stamp)
+    sensor_states['sensor.bedroom'].last_changed = now - timedelta(days=1)
+    sensor_states['sensor.bedroom'].last_reported = now
+    if case.get('missing'):
+        del sensor_states['sensor.bedroom']
+    context = dict(inputs, now=lambda: now, states=sensor_states,
                    state_attr=lambda entity, attr: entity == case.get('restored'), as_timestamp=timestamp,
                    start_time=case.get('start', inputs['start_time']),
                    end_time=case.get('end', inputs['end_time']))
@@ -106,7 +121,8 @@ for case in cases:
 assert choice['sequence'][0]['action'] == inputs['override_action']
 assert blueprint['actions'][1]['default'][0]['action'] == inputs['disable_action']
 assert blueprint['triggers'][-1]['entity_id'] == [inputs[key] for key in
-                                                ('temperature_sensor', 'timestamp_sensor', 'timeout_sensor')]
+                                                ('temperature_sensor', 'timeout_sensor')]
+assert 'timestamp_sensor' not in blueprint['blueprint']['input']
 assert [trigger['at'] for trigger in blueprint['triggers'] if trigger['trigger'] == 'time'] == [
     inputs['start_time'], inputs['end_time']]
 print(f'Blueprint CNRF : {len(cases)} scénarios de templates OK')

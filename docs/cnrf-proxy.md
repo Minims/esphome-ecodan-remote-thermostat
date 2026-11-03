@@ -61,16 +61,25 @@ Pour une installation manuelle, copier [cnrf_proxy.yaml](../blueprints/automatio
 `/config/blueprints/automation/ecodan/cnrf_proxy.yaml` de Home Assistant (2024.10.0 minimum).
 Recharger les blueprints depuis **Paramètres → Automatisations et scènes → Blueprints**,
 puis créer une automatisation à partir de **PAC - Sonde externe via proxy CNRF**.
-Sélectionner la sonde en °C, le capteur d'horodatage de sa mesure physique et l'entité
+Sélectionner la sonde en °C et l'entité
 ESPHome **Durée maximale de la mesure** en secondes. Adapter les deux noms d'actions
 ESPHome si le nœud a été renommé. Aucun script du package n'est nécessaire.
+La date est lue directement dans `last_updated` de la sonde ; aucun capteur de date
+séparé n'est demandé. Après réimport d'une ancienne version du blueprint,
+reconfigurer l'automatisation existante pour retirer l'ancienne entrée `timestamp_sensor`.
 
 La plage par défaut est **22 h 30–7 h**, modifiable dans le formulaire ; une plage
 de jour fonctionne aussi et des heures identiques désactivent le remplacement.
 Le blueprint réévalue la mesure aux bornes de la plage, au démarrage HA, aux
-changements des trois capteurs et chaque minute. Hors plage ou si les données
+changements des deux capteurs et chaque minute. Hors plage ou si les données
 sont invalides, futures, restaurées ou périmées, il demande le retour au thermostat.
-Il transmet l'âge réel de la mesure au firmware sans le remettre à zéro.
+Il transmet l'âge de `last_updated` au firmware sans le remettre à zéro.
+Cette date change lorsque la valeur ou un attribut change, contrairement à
+`last_changed` qui suit seulement la valeur. Une température et des attributs
+inchangés peuvent donc expirer malgré de nouveaux relevés. À l'inverse, un changement
+d'attribut ou une republication de cache peut rajeunir cette date sans nouvelle mesure
+physique : le contrôle de fraîcheur dépend du comportement de l'intégration de la sonde.
+Voir les [dates des états Home Assistant](https://www.home-assistant.io/docs/configuration/state_object/).
 Désactiver l'ancienne automatisation du package avant d'activer celle du blueprint,
 et n'utiliser qu'une automatisation pour un même proxy afin d'éviter des commandes concurrentes.
 Si HA est arrêté ou le proxy inaccessible, l'expiration locale du firmware reste applicable.

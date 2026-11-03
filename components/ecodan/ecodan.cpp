@@ -1,4 +1,5 @@
 #include "ecodan.h"
+#include <cmath>
 
 namespace esphome {
 namespace ecodan 
@@ -18,13 +19,8 @@ namespace ecodan
     }
 
     void EcodanHeatpump::set_room_thermostat_current_temp(float temp, uint8_t room) {
-        if (proxy_mode_) return;
-        if (temp != NAN && room < 8 && room >= 0) {
-            status.CurrentRoomTemperatures[room] = temp;
-        }
-        else {
-            status.CurrentRoomTemperatures[room] = 0xff;
-        }
+        if (proxy_mode_ || room >= MAX_REMOTE_THERMOSTATS) return;
+        status.CurrentRoomTemperatures[room] = std::isnan(temp) ? 0xff : temp;
     }    
 
     void EcodanHeatpump::publish_state(const std::string& sensorKey, float sensorValue) {

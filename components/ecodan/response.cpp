@@ -19,9 +19,11 @@ namespace ecodan
                 status.RcMasterZone1 = res[9] & 0xf;
                 status.update_target_temperatures();
             }
+            break;
         default:
-            if (static_cast<uint8_t>(res.payload_type<GetType>()) != 0)
+            if (static_cast<uint8_t>(res.payload_type<GetType>()) != 0) {
                 ESP_LOGI(TAG, "Unknown response type received on serial port: %u", static_cast<uint8_t>(res.payload_type<GetType>()));
+            }
             break;
         }
     }
@@ -42,9 +44,11 @@ namespace ecodan
             status.RcMasterZone2 = res[13];
             status.RcMasterZone1 = res[9] & 0xf;
             status.update_target_temperatures();
+            break;
         default:
-            if (static_cast<uint8_t>(res.payload_type<GetType>()) != 0)
+            if (static_cast<uint8_t>(res.payload_type<GetType>()) != 0) {
                 ESP_LOGI(TAG, "Unknown response type received on serial port: %u", static_cast<uint8_t>(res.payload_type<GetType>()));
+            }
             break;
         }        
     }    

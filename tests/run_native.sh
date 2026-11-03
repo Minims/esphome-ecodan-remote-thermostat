@@ -15,3 +15,4 @@ for source in tests/test_*.cpp; do
   fi
   "$binary"
 done
+python3 tests/test_ecodan.py

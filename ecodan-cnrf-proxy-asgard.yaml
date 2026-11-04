@@ -1,9 +1,9 @@
-# ESPHome 2026.9.1. Copy secrets.example.yaml to secrets.yaml and fill in the values.
+# ESPHome 2026.10.2. Copy secrets.example.yaml to secrets.yaml and fill in the values.
 # FTC CNRF -> Asgard HP -> Asgard SL -> PAR-WR61R-E.
 esphome:
   name: ecodan-cnrf-proxy
   friendly_name: Proxy CNRF Asgard
-  min_version: 2026.9.1
+  min_version: 2026.10.2
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -47,6 +47,11 @@ api:
         - api.respond:
             data: !lambda |-
               root["accepted"] = true;
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server
 
 web_server:
   version: 3

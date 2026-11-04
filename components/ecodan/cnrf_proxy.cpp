@@ -126,6 +126,9 @@ void CnrfProxy::transmit_pending(PendingFrame &pending, CnrfFrameRewriter &rewri
   auto &out = pending.output;
   if (!out.size) return;
   portENTER_CRITICAL(&mutex_);
+  // The UART ISR shares this core: consume errors atomically with the first TX write.
+  handle_errors(0, rewriter, status);
+  handle_errors(1, rewriter, status);
   // Once any byte reaches the UART, preserve the whole frame and its checksum.
   if (pending.sent == 0 && out.original_temperature != 0xff &&
       (pending.generation != override_generation_ || !override_.effective(millis()))) {

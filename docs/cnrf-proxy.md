@@ -4,7 +4,7 @@
 
 ## Configuration et démarrage
 
-Utiliser `ecodan-cnrf-proxy-asgard.yaml` avec **ESPHome 2026.9.1** (`requirements-dev.txt`). Le fichier charge les composants du clone local ; il ne télécharge pas une version amont qui remplacerait les modifications.
+Utiliser `ecodan-cnrf-proxy-asgard.yaml` avec **ESPHome 2026.10.2** (`requirements-dev.txt`). Le fichier charge les composants du clone local ; il ne télécharge pas une version amont qui remplacerait les modifications.
 
 ```text
 FTC CNRF → Asgard HP → Asgard SL → PAR-WR61R-E ↔ PAR-WT60R-E
@@ -13,7 +13,7 @@ FTC CNRF → Asgard HP → Asgard SL → PAR-WR61R-E ↔ PAR-WT60R-E
 
 Les deux UART utilisent 2400 bauds, 8 bits, parité paire, un stop. Vérifier les références réellement inscrites sur les équipements. Le proxy occupe les deux ports ; une supervision CN105 simultanée nécessite une autre interface.
 
-Créer `secrets.yaml` à partir de `secrets.example.yaml` seulement si le fichier local n’existe pas. Renseigner `wifi_ssid`, `wifi_password`, `api_encryption_key` (32 octets en base64), `web_server_username` et `web_server_password`. `secrets.yaml` et `.esphome/` sont exclus de Git. Dans ce workspace, les cinq clés ont été reprises du fichier ESPHome fourni par l’utilisateur, sans publier leurs valeurs.
+Créer `secrets.yaml` à partir de `secrets.example.yaml` seulement si le fichier local n’existe pas. Renseigner `wifi_ssid`, `wifi_password`, `api_encryption_key` (32 octets en base64), `ota_password`, `web_server_username` et `web_server_password`. Pour mettre à jour un appareil existant, conserver ses identifiants Wi-Fi, API et OTA. `secrets.yaml` et `.esphome/` sont exclus de Git.
 
 ```sh
 esphome config ecodan-cnrf-proxy-asgard.yaml
@@ -21,6 +21,8 @@ esphome compile ecodan-cnrf-proxy-asgard.yaml
 ```
 
 Ces commandes ne téléversent rien. L’exemple utilise des partitions de 4 Mo : identifier la capacité de flash avant un éventuel téléversement. Le firmware compilé contient les identifiants locaux ; ne pas publier son binaire.
+
+Le firmware conserve les mises à jour OTA natives avec mot de passe et depuis la page web authentifiée. Pour téléverser le binaire compilé vers le proxy identifié : `esphome upload ecodan-cnrf-proxy-asgard.yaml --device <adresse-du-proxy>`.
 
 Le pont démarre avant le Wi-Fi. L’override est désactivé après chaque démarrage. Une perte du Wi-Fi ou de Home Assistant ne provoque pas de redémarrage automatique du proxy.
 
@@ -130,6 +132,8 @@ Quatorze régressions supplémentaires exécutent la tâche de production : réc
 Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 31 scénarios de templates, avec la durée lue depuis une entité `number`.
 
 Sept régressions couvrent aussi les trames en attente TX : expiration, désactivation, remplacement de mesure, changement de durée, erreur UART, émission déjà commencée et conservation de l’ordre entre octets transparents et trames.
+
+Deux régressions injectent une erreur de parité, sur chaque UART, entre la lecture initiale des événements et le premier octet TX. Les événements sont revérifiés sous section critique avant l'émission pour annuler le remplacement dans ce cas.
 
 Avant raccordement : contrôle de continuité et de l’orientation des câbles, passage du 12 V, niveaux RX/TX et fronts sous charge. Le manuel Asgard interdit l’alimentation USB simultanée à l’alimentation PAC. Mesurer d’abord une liaison directe puis le proxy transparent ; vérifier ensuite la latence des candidates actives avec le récepteur réel. Tester HTTP lent, Wi-Fi coupé/rétabli, récepteur absent, expiration, redémarrage, commandes de consigne et ECS. Si la latence provoque des timeouts, garder l’override désactivé et reprendre l’analyse des captures.
 

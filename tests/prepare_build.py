@@ -12,6 +12,7 @@ text = text.replace("path: components", f"path: {root / 'components'}")
 (target / "secrets.yaml").write_text(
     'wifi_ssid: "cnrf-build-test"\nwifi_password: "not-a-real-network"\n'
     f'api_encryption_key: "{base64.b64encode(secrets.token_bytes(32)).decode()}"\n'
+    f'ota_password: "{secrets.token_urlsafe(32)}"\n'
     'web_server_username: "test"\n'
     f'web_server_password: "{secrets.token_urlsafe(32)}"\n'
 )

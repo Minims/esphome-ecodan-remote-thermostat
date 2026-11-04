@@ -50,6 +50,20 @@ void run_case(const std::string &name) {
   }
   esphome::uart::IDFUARTComponent ftc(0), receiver(1);
   CnrfProxy proxy;
+  const bool fault_before_tx = name == "fault_before_tx_ftc" || name == "fault_before_tx_receiver";
+  std::atomic<bool> fault_injected{false};
+  if (fault_before_tx) {
+    fake_task_delay_hook = [&] {
+      if (fault_injected || proxy.status().modified_frames != 1) return;
+      fake_before_lock = [&] {
+        assert(output(0).empty());
+        auto &port = fake_ports[name == "fault_before_tx_ftc" ? 0 : 1];
+        std::lock_guard<std::mutex> lock(port.mutex);
+        port.events.push_back({UART_PARITY_ERR});
+        fault_injected = true;
+      };
+    };
+  }
   proxy.configure(1, 39, 38, 7, 8, 900000);
   if (name == "interrupt_failure_ftc" || name == "interrupt_failure_receiver") {
     fake_ports[name == "interrupt_failure_ftc" ? 0 : 1].fail_enable_interrupt = true;
@@ -62,7 +76,13 @@ void run_case(const std::string &name) {
   await([&] { return proxy.status().ready; });
   assert(proxy.status().override_timeout_ms == 900000);
 
-  if (queued_case) {
+  if (fault_before_tx) {
+    assert(proxy.apply(16, 0));
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == temperature_frame.size() && proxy.status().uart_fault; });
+    assert(fault_injected && !proxy.status().effective);
+    assert(output(0) == temperature_frame);
+  } else if (queued_case) {
     assert(proxy.apply(16, 899950));
     deliver(1, temperature_frame);
     await([&] { return proxy.status().modified_frames == 1; });
@@ -306,6 +326,7 @@ int main(int argc, char **argv) {
                            "renew_expired", "replace_pending", "reject_pending", "frame_error_ftc",
                            "frame_error_receiver", "interrupt_failure_ftc", "interrupt_failure_receiver",
                            "timeout_runtime", "timeout_pending", "queued_expiry", "queued_disable", "queued_replace",
-                           "queued_timeout", "queued_fault", "partial_expiry", "queued_order"})
+                           "queued_timeout", "queued_fault", "partial_expiry", "queued_order",
+                           "fault_before_tx_ftc", "fault_before_tx_receiver"})
     run_case(name);
 }

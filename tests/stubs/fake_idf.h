@@ -9,9 +9,9 @@
 #include <thread>
 #include <vector>
 
-using portMUX_TYPE = std::mutex;
+using portMUX_TYPE = std::recursive_mutex;
 inline thread_local std::function<void()> fake_before_lock;
-inline void fake_enter_critical(std::mutex *mutex) {
+inline void fake_enter_critical(portMUX_TYPE *mutex) {
   auto hook = std::move(fake_before_lock);
   fake_before_lock = nullptr;
   if (hook) hook();

@@ -40,12 +40,30 @@ Changer la durée annule le remplacement en cours sans rajeunir la mesure. Le bl
 
 « Remplacement actif » signifie qu’il est autorisé sur une prochaine trame valide contenant RC1. « Dernière température préparée pour la FTC » correspond à la sortie du parseur, avant la file d’émission ; ce n’est pas un acquittement de la PAC. Aucune donnée reçue est affichée comme inconnue, et les âges permettent de repérer une liaison silencieuse. La dernière température observée ne prouve pas à elle seule que la communication continue.
 
-L’API native ESPHome chiffrée expose deux actions :
+L’API native ESPHome chiffrée expose les actions suivantes :
 
 | Action | Paramètres | Effet |
 |---|---|---|
 | `cnrf_override` | `temperature: float`, `sample_age_ms: int` | Validation atomique et activation pour la durée actuellement réglée moins `sample_age_ms`, en ms. |
 | `cnrf_disable` | Aucun | Désactivation, sans émission CNRF spontanée. |
+| `cnrf_capture_start` | Aucun | Démarre une capture RX de 120 secondes dans les deux sens et efface la capture précédente. |
+| `cnrf_capture_read` | Aucun | Renvoie et vide les tampons de capture, sans prolonger sa durée ni modifier le remplacement. |
+
+La capture est désactivée au démarrage. Appeler `cnrf_capture_start`, puis
+`cnrf_capture_read` avec les données de réponse demandées, environ deux fois par
+seconde. La réponse contient `active` et deux objets, `ftc_rx` (reçu de la PAC) et
+`receiver_rx` (reçu du récepteur, avant remplacement). Chaque objet contient
+`hex`, les octets bruts en hexadécimal, `first_ms` et `last_ms`, leurs instants de
+lecture depuis le démarrage de l’ESP, et `dropped`, le nombre d’octets non capturés
+depuis la dernière lecture. Les blocs peuvent couper une trame : concaténer les
+blocs d’un même sens pour l’analyser. Ces données RX ne prouvent pas la réception
+des octets transmis par l’autre appareil.
+
+Chaque sens dispose de 512 octets. Si le lecteur tarde ou se déconnecte, les
+octets excédentaires ne sont pas capturés ; la transmission UART continue.
+Un `dropped` non nul signale une coupure dans la capture après les octets du bloc.
+Après 120 secondes, la copie s’arrête ; les derniers octets restent lisibles.
+Le formatage et la réponse réseau s’exécutent hors de la tâche UART.
 
 Une température non finie/hors plage, un âge négatif ou supérieur ou égal à la durée actuellement réglée (en ms) et un pont indisponible font échouer l’activation sans rafraîchir l’état précédent. La réponse native indique le succès ou l’échec ; si les données de réponse sont demandées, elle contient aussi `remaining_ms`.
 
@@ -106,7 +124,7 @@ Le serveur HTTP Arduino `/api/override` n’est pas repris dans cette extension.
 
 Configurer `proxy_mode: true`, deux UART distinctes et `proxy_controller: 1` (RC1 ; valeurs 1 à 8 admises). L'option du composant `proxy_override_timeout` reste disponible avec une valeur par défaut de `10min`. Dans le YAML fourni, le réglage `number` la remplace au démarrage par sa valeur mémorisée, ou par son `initial_value: 600` à la première utilisation. Modifier cette valeur initiale pour changer le défaut de l'interface. Le validateur refuse un débit/parité incorrects, une UART manquante, des broches inversées et le débogage UART partagé. Les UART doivent être réservées au proxy : ne pas appeler leurs fonctions depuis une autre lambda.
 
-Le mode strict court-circuite les boucles d’émulation, le changement automatique de débit, les commandes de connexion et les setters du thermostat simulé. Il transmet les octets FTC vers récepteur sans interprétation. Dans l’autre sens, seule une trame complète `FC 48 04 03 10 27 … checksum`, avec checksum valide et RC présent, peut être modifiée. `0xFF` ne devient jamais une sonde artificielle. Les trames inconnues, corrompues ou tronquées sont restituées ; les longueurs déclarées empêchent de reconnaître une fausse trame dans un autre payload.
+Le mode strict court-circuite les boucles d’émulation, le changement automatique de débit, les commandes de connexion et les setters du thermostat simulé. Il transmet les octets FTC vers récepteur sans interprétation. Dans l’autre sens, les trames complètes de mesure `FC 48 04 03 10 27 … checksum` et de consigne `FC 49 04 03 10 28 … checksum`, avec checksum valide et RC présent, peuvent être modifiées. Dans une trame de consigne, seule la mesure ambiante du RC sélectionné est remplacée ; la consigne reste inchangée. La position de cette mesure est conservée pour pouvoir la restaurer si le remplacement est annulé avant émission. `0xFF` ne devient jamais une sonde artificielle. Les trames inconnues, corrompues ou tronquées sont restituées ; les longueurs déclarées empêchent de reconnaître une fausse trame dans un autre payload.
 
 Une tâche FreeRTOS possède les pilotes UART IDF. Chaque UART a un tampon RX de 512 octets et une file logicielle TX de 512 octets, servie par écritures non bloquantes et lots bornés. Une trame modifiée attend séparément (22 octets au maximum), après les octets précédents ; sa présence suspend la lecture du récepteur pour préserver l’ordre. Le seuil RX matériel est fixé à **un octet** pour transmettre progressivement. La file de 544 événements par UART permet de garder les erreurs même après une accumulation d’événements de réception ; elle est parcourue avant de traiter les données. Les pilotes sont réinstallés après l’initialisation ESPHome pour recevoir ces événements ; les autres utilisateurs de ces UART sont interdits. Une erreur de parité, de trame ou un débordement invalide la candidate et désactive l’override jusqu’à une nouvelle activation explicite. Une perte physique d’octets ne peut pas être réparée.
 
@@ -132,6 +150,13 @@ Quatorze régressions supplémentaires exécutent la tâche de production : réc
 Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 31 scénarios de templates, avec la durée lue depuis une entité `number`.
 
 Sept régressions couvrent aussi les trames en attente TX : expiration, désactivation, remplacement de mesure, changement de durée, erreur UART, émission déjà commencée et conservation de l’ordre entre octets transparents et trames.
+
+Les deux trames de consigne capturées sur le PAR-WR61R-E (16,5 puis 16 °C,
+avec une mesure ambiante à 23 °C) servent de régressions : seule la mesure devient
+18 °C, avec recalcul du checksum. Les tests couvrent aussi RC1/RC2/RC8, la sonde
+absente, les troncatures et les trames invalides. Les scénarios de la tâche de
+production sont exécutés pour les deux formats, notamment pour vérifier qu’une
+annulation avant TX restaure la mesure sans altérer la consigne.
 
 Deux régressions injectent une erreur de parité, sur chaque UART, entre la lecture initiale des événements et le premier octet TX. Les événements sont revérifiés sous section critique avant l'émission pour annuler le remplacement dans ce cas.
 

@@ -31,11 +31,24 @@ int main() {
   feed(0, frame); feed(1, frame);
   await([&] { return output(0).size() == 22 && output(1).size() == 22; });
   assert(output(0) == frame && output(1) == frame);
+  // Capture must be opt-in and must retain RX bytes before temperature rewriting.
+  auto capture = proxy.take_capture();
+  assert(!capture.active && capture.streams[0].size == 0 && capture.streams[1].size == 0);
+  proxy.start_capture();
   assert(proxy.apply(16, 540000));
+  feed(0, frame);
   feed(1, frame);
-  await([&] { return output(0).size() == 44; });
+  await([&] { return output(0).size() == 44 && output(1).size() == 44; });
   auto bytes = output(0);
   assert(bytes[28] == 0xa0 && bytes[43] == 0x36);
+  capture = proxy.take_capture();
+  assert(capture.active);
+  for (const auto &stream : capture.streams) {
+    assert(stream.size == frame.size() && stream.dropped == 0);
+    assert(std::equal(frame.begin(), frame.end(), stream.bytes.begin()));
+  }
+  capture = proxy.take_capture();
+  assert(capture.active && capture.streams[0].size == 0 && capture.streams[1].size == 0);
   assert(!proxy.apply(NAN, 0) && proxy.status().remaining_ms == 60000);
   fake_now = 60000;
   await([&] { return !proxy.status().effective; });
@@ -70,6 +83,7 @@ int main() {
   assert(std::equal(frame.begin(), frame.end(), bytes.begin() + before_disable_race));
   assert(!proxy.status().effective);
   // 1,000 frames in each direction, partial writes and concurrent status snapshots.
+  proxy.start_capture();
   const auto before_bulk_ftc = output(0).size();
   const auto before_bulk_receiver = output(1).size();
   std::vector<uint8_t> bulk;
@@ -90,6 +104,38 @@ int main() {
   assert(std::equal(bulk.begin(), bulk.end(), bytes.begin() + before_bulk_ftc));
   bytes = output(1);
   assert(std::equal(bulk.begin(), bulk.end(), bytes.begin() + before_bulk_receiver));
+  // An unread/full capture must drop diagnostic bytes, never traffic on either UART.
+  capture = proxy.take_capture();
+  for (const auto &stream : capture.streams) {
+    assert(stream.size == stream.bytes.size());
+    assert(stream.dropped == bulk.size() - stream.size);
+    assert(std::equal(stream.bytes.begin(), stream.bytes.end(), bulk.begin()));
+    assert(stream.first_ms == 60000 && stream.last_ms == 60000);
+  }
+  fake_now = 180000;
+  auto before_expired = output(0).size();
+  feed(1, frame);
+  await([&] { return output(0).size() == before_expired + frame.size(); });
+  capture = proxy.take_capture();
+  assert(!capture.active && capture.streams[1].size == 0);
+
+  // Restart clears old data; the two-minute lifetime must also survive millis() wrap.
+  fake_now = UINT32_MAX - 10;
+  proxy.start_capture();
+  fake_now = 19;
+  const std::vector<uint8_t> command = {0xfc,0x49,4,3,0x10,0x28,0xac,0xa8,
+      0xff,0xff,0xff,0xff,0xff,0xff,0xff,0,1,0xff,0,0,0,0x2b};
+  auto before_command = output(0).size();
+  feed(1, command);
+  await([&] { return output(0).size() == before_command + command.size(); });
+  capture = proxy.take_capture();
+  assert(capture.active && capture.streams[1].size == command.size());
+  assert(capture.streams[1].first_ms == 19 && capture.streams[1].last_ms == 19);
+  assert(std::equal(command.begin(), command.end(), capture.streams[1].bytes.begin()));
+  bytes = output(0);
+  assert(std::equal(command.begin(), command.end(), bytes.begin() + before_command));
+  fake_now = 119989;
+  assert(!proxy.take_capture().active);
   proxy.stop();
   proxy_thread.join();
   assert(!proxy.status().ready && !proxy.apply(16, 0));

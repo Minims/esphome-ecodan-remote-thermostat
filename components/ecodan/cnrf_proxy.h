@@ -24,6 +24,16 @@ struct CnrfProxyStatus {
   float target_temperature{NAN}, original_temperature{NAN}, output_temperature{NAN};
 };
 
+struct CnrfCapture {
+  struct Stream {
+    std::array<uint8_t, 512> bytes{};
+    std::size_t size{0};
+    uint32_t first_ms{0}, last_ms{0}, dropped{0};
+  };
+  std::array<Stream, 2> streams{};  // FTC RX, receiver RX, before rewriting.
+  bool active{false};
+};
+
 class CnrfProxy {
  public:
   void configure(uint8_t controller, int ftc_tx, int ftc_rx, int receiver_tx, int receiver_rx,
@@ -38,6 +48,8 @@ class CnrfProxy {
   bool set_timeout(float timeout_seconds);
   void disable();
   CnrfProxyStatus status();
+  void start_capture();
+  CnrfCapture take_capture();
 
  private:
   struct PendingFrame {
@@ -53,10 +65,13 @@ class CnrfProxy {
   void fault(CnrfFrameRewriter &rewriter, CnrfProxyStatus &status, bool overflow = false);
   void transmit(unsigned index, ByteQueue &queue, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status);
   void transmit_pending(PendingFrame &pending, CnrfFrameRewriter &rewriter, CnrfProxyStatus &status);
+  void capture_byte(unsigned index, uint8_t byte, uint32_t now);
 
   portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
   OverrideState override_;
   CnrfProxyStatus status_;
+  CnrfCapture capture_;
+  uint32_t capture_started_at_{0};
   uint32_t override_generation_{0};
   std::atomic<bool> stopping_{false}, stopped_{true};
   uart_port_t ports_[2]{UART_NUM_MAX, UART_NUM_MAX};

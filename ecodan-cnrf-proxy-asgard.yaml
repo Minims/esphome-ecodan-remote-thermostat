@@ -47,6 +47,27 @@ api:
         - api.respond:
             data: !lambda |-
               root["accepted"] = true;
+    - action: cnrf_capture_start
+      then:
+        - lambda: id(ecodan_instance).start_proxy_capture();
+        - api.respond:
+            data: !lambda |-
+              root["duration_seconds"] = 120;
+    - action: cnrf_capture_read
+      then:
+        - api.respond:
+            data: !lambda |-
+              const auto capture = id(ecodan_instance).take_proxy_capture();
+              root["active"] = capture.active;
+              const char *directions[] = {"ftc_rx", "receiver_rx"};
+              for (unsigned i = 0; i < 2; ++i) {
+                const auto &stream = capture.streams[i];
+                auto rx = root[directions[i]].to<JsonObject>();
+                rx["hex"] = format_hex(stream.bytes.data(), stream.size);
+                rx["first_ms"] = stream.first_ms;
+                rx["last_ms"] = stream.last_ms;
+                rx["dropped"] = stream.dropped;
+              }
 
 ota:
   - platform: esphome

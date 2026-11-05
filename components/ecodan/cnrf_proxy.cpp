@@ -91,6 +91,43 @@ CnrfProxyStatus CnrfProxy::status() {
   return copy;
 }
 
+void CnrfProxy::start_capture() {
+  portENTER_CRITICAL(&mutex_);
+  capture_ = {};
+  capture_.active = true;
+  capture_started_at_ = millis();
+  portEXIT_CRITICAL(&mutex_);
+}
+
+CnrfCapture CnrfProxy::take_capture() {
+  portENTER_CRITICAL(&mutex_);
+  capture_.active = capture_.active && static_cast<uint32_t>(millis() - capture_started_at_) < 120000;
+  auto copy = capture_;
+  for (auto &stream : capture_.streams) {
+    stream.size = 0;
+    stream.first_ms = stream.last_ms = stream.dropped = 0;
+  }
+  portEXIT_CRITICAL(&mutex_);
+  return copy;
+}
+
+void CnrfProxy::capture_byte(unsigned index, uint8_t byte, uint32_t now) {
+  // Called with mutex_ held; a slow reader may lose capture bytes, never UART traffic.
+  if (!capture_.active) return;
+  if (static_cast<uint32_t>(now - capture_started_at_) >= 120000) {
+    capture_.active = false;
+    return;
+  }
+  auto &stream = capture_.streams[index];
+  if (stream.size == stream.bytes.size()) {
+    ++stream.dropped;
+    return;
+  }
+  if (stream.size == 0) stream.first_ms = now;
+  stream.bytes[stream.size++] = byte;
+  stream.last_ms = now;
+}
+
 void CnrfProxy::fault(CnrfFrameRewriter &rewriter, CnrfProxyStatus &status, bool overflow) {
   rewriter.invalidate();
   ++status.uart_errors;
@@ -132,7 +169,7 @@ void CnrfProxy::transmit_pending(PendingFrame &pending, CnrfFrameRewriter &rewri
   // Once any byte reaches the UART, preserve the whole frame and its checksum.
   if (pending.sent == 0 && out.original_temperature != 0xff &&
       (pending.generation != override_generation_ || !override_.effective(millis()))) {
-    const auto position = 5U + controller_;
+    const auto position = out.temperature_position;
     out.bytes[21] = static_cast<uint8_t>(out.bytes[21] + out.bytes[position] - out.original_temperature);
     out.bytes[position] = out.original_temperature;
     out.original_temperature = 0xff;
@@ -164,6 +201,9 @@ void CnrfProxy::run() {
       int count = uart_read_bytes(ports_[0], &byte, 1, 0);
       if (count < 0) { fault(rewriter, local); break; }
       if (count == 0) break;
+      portENTER_CRITICAL(&mutex_);
+      capture_byte(0, byte, millis());
+      portEXIT_CRITICAL(&mutex_);
       to_receiver.push(&byte, 1);
       ++local.ftc_bytes;
       local.ftc_last_rx = millis();
@@ -178,6 +218,7 @@ void CnrfProxy::run() {
       handle_errors(1, rewriter, local);
       portENTER_CRITICAL(&mutex_);
       const auto now = millis();
+      capture_byte(1, byte, now);
       if (generation != override_generation_) {
         generation = override_generation_;
         rewriter.invalidate();

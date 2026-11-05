@@ -4,9 +4,13 @@
 #include "cnrf_proxy.h"
 
 using esphome::ecodan::CnrfProxy;
-const std::vector<uint8_t> temperature_frame = {
+const std::vector<uint8_t> normal_frame = {
     0xfc,0x48,0x04,0x03,0x10,0x27,0xa8,0xa8,0xff,0xff,0xff,
     0xff,0xff,0xff,0x03,0xff,0,0,0,0,0,0x2e};
+
+const std::vector<uint8_t> setpoint_frame = {
+    0xfc,0x49,0x04,0x03,0x10,0x28,0xa1,0xae,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0x00,0x01,0xff,0x00,0x00,0x00,0x30};
 
 template<typename Predicate> void await(Predicate ready) {
   const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -28,7 +32,11 @@ void deliver(int index, const std::vector<uint8_t> &bytes) {
   fake_ports[index].rx.insert(fake_ports[index].rx.end(), bytes.begin(), bytes.end());
 }
 
-void run_case(const std::string &name) {
+void run_case(const std::string &name, bool setpoint = false) {
+  const auto &temperature_frame = setpoint ? setpoint_frame : normal_frame;
+  const size_t room_position = setpoint ? 7 : 6;
+  const uint8_t checksum16 = setpoint ? 0x3e : 0x36;
+  const uint8_t checksum19 = setpoint ? 0x38 : 0x30;
   fake_now = 1000;
   fake_read_hook = nullptr;
   fake_task_delay_hook = nullptr;
@@ -69,7 +77,7 @@ void run_case(const std::string &name) {
     fake_ports[name == "interrupt_failure_ftc" ? 0 : 1].fail_enable_interrupt = true;
     assert(!proxy.start(&ftc, &receiver));
     assert(!proxy.status().ready && !proxy.apply(16, 0));
-    std::cout << "Proxy regression: " << name << " OK\n";
+    std::cout << "Proxy regression: " << name << (setpoint ? " (setpoint)" : " (measurement)") << " OK\n";
     return;
   }
   assert(proxy.start(&ftc, &receiver));
@@ -105,12 +113,12 @@ void run_case(const std::string &name) {
     resume_tx = true;
     await([&] { return output(0).size() == 22; });
     auto expected = temperature_frame;
-    if (name == "partial_expiry") { expected[6] = 0xa0; expected[21] = 0x36; }
+    if (name == "partial_expiry") { expected[room_position] = 0xa0; expected[21] = checksum16; }
     assert(output(0) == expected);
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 44; });
     expected = temperature_frame;
-    if (name == "queued_replace") { expected[6] = 0xa6; expected[21] = 0x30; }
+    if (name == "queued_replace") { expected[room_position] = 0xa6; expected[21] = checksum19; }
     const auto bytes = output(0);
     assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
   } else if (name == "queued_order") {
@@ -174,7 +182,7 @@ void run_case(const std::string &name) {
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 44; });
     auto expected = temperature_frame;
-    expected[6] = 0xa6; expected[21] = 0x30;
+    expected[room_position] = 0xa6; expected[21] = checksum19;
     const auto bytes = output(0);
     assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
   } else if (name == "fifo") {
@@ -229,8 +237,8 @@ void run_case(const std::string &name) {
     await([&] { return output(0).size() == bytes.size(); });
     assert(proxy.status().modified_frames == 10);
     for (unsigned i = 0; i < 10; ++i) {
-      bytes[i * 22 + 6] = 0xa0;
-      bytes[i * 22 + 21] = 0x36;
+      bytes[i * 22 + room_position] = 0xa0;
+      bytes[i * 22 + 21] = checksum16;
     }
     assert(output(0) == bytes);
   } else if (name == "idle") {
@@ -258,11 +266,11 @@ void run_case(const std::string &name) {
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 22; });
     auto expected = temperature_frame;
-    if (name == "reject_pending") { expected[6] = 0xa0; expected[21] = 0x36; }
+    if (name == "reject_pending") { expected[room_position] = 0xa0; expected[21] = checksum16; }
     assert(output(0) == expected);
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 44; });
-    if (name != "reject_pending") { expected[6] = 0xa6; expected[21] = 0x30; }
+    if (name != "reject_pending") { expected[room_position] = 0xa6; expected[21] = checksum19; }
     const auto bytes = output(0);
     assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
   } else if (name == "frame_error_ftc" || name == "frame_error_receiver") {
@@ -317,7 +325,7 @@ void run_case(const std::string &name) {
   proxy_thread.join();
   fake_read_hook = nullptr;
   fake_task_delay_hook = nullptr;
-  std::cout << "Proxy regression: " << name << " OK\n";
+  std::cout << "Proxy regression: " << name << (setpoint ? " (setpoint)" : " (measurement)") << " OK\n";
 }
 
 int main(int argc, char **argv) {
@@ -328,5 +336,8 @@ int main(int argc, char **argv) {
                            "timeout_runtime", "timeout_pending", "queued_expiry", "queued_disable", "queued_replace",
                            "queued_timeout", "queued_fault", "partial_expiry", "queued_order",
                            "fault_before_tx_ftc", "fault_before_tx_receiver"})
-    run_case(name);
+    {
+      run_case(name);
+      run_case(name, true);
+    }
 }

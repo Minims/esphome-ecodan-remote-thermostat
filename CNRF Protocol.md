@@ -106,12 +106,16 @@
   * 0x12 : 0001 0010 (RC2 for Z1 and RC1 for Z2)
 
 # Set Request Temperature (Wireless > CNRF)
-| 0 | 1 | 2 | 3 | 4 | 0  | 1 | 2  | 3 | 4 |5  |6  | 7 |8  | 9 | 10|11 |12 |13 |14 |15 |16 |
-|---|---|---|---|---|----|---|----|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|SYN|TYP|   |   | SZ|CMD |c1?|c1/2| c3| c4| c5| c6| c7| c8| c8|   |cf |cf |   | ? |   |CHK|   
-|fc |49 | 4 | 3 |10 | 28 | a4| a4 |a4 |ff |ff |ff |ff |ff | ff| 0 | 3 | ff| 0 | 1 | 0 |8f |     (Was this a messed up packet?)
-* c1/c2 here seems strange/incorrect >> why the Offset & Why 3 values of a4 (temperature)
-* cf : Configuration?
+| 0 | 1 | 2 | 3 | 4 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|----|----|----|----|----|----|----|
+|SYN|TYP| | |SZ|CMD|SP|c1|c2|c3|c4|c5|c6|c7|c8| |cf|cf| |Z2| |CHK|
+|fc|49|04|03|10|28|a1|ae|ff|ff|ff|ff|ff|ff|ff|00|01|ff|00|00|00|30|
+
+Captured on the PAR-WR61R-E, 2026-11-05: setpoint 16.5 °C (`a1`), RC1 room temperature 23 °C (`ae`). A second change to 16 °C used `a0` and checksum `31`, with RC1 still `ae`.
+* SP: requested setpoint, at absolute byte 6 (zero-based).
+* c1 - c8: room measurements, starting at absolute byte 7; `ff` denotes an absent controller. This layout also matches the command encoder in `components/ecodan/commands.cpp`.
+* Z2: zone 2 selector set by the command encoder; the captured commands above select zone 1.
+* cf: configuration fields; not modified by the proxy.
 
 # Set Request Hot Water (Wireless > CNRF)
 | 0 | 1 | 2 | 3 | 4 | 0  | 1 | 2  | 3 | 4 |5  |6  | 7 |8  | 9 | 10|11 |12 |13 |14 |15 |16 |

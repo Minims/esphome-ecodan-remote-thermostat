@@ -11,6 +11,7 @@ class CnrfFrameRewriter {
     std::array<std::uint8_t, 22> bytes{};
     std::size_t size{0};
     std::uint8_t original_temperature{0xff};
+    std::uint8_t temperature_position{0};
   };
 
   explicit CnrfFrameRewriter(std::uint8_t controller = 1) : controller_(controller) {}
@@ -39,7 +40,7 @@ class CnrfFrameRewriter {
     const std::size_t index = count_++;
     if (index < frame_.size()) frame_[index] = input;
     sum_ = static_cast<std::uint8_t>(sum_ + input);
-    if (index == 1 && input != 0x48) candidate_ = false;
+    if (index == 1 && input != 0x48 && input != 0x49) candidate_ = false;
     if (!alternate_header_ && ((index == 2 && input != 0x04) || (index == 3 && input != 0x03))) {
       candidate_ = false;
       // Malformed header: do not trust embedded FC bytes until an idle gap.
@@ -50,7 +51,7 @@ class CnrfFrameRewriter {
       if (input != 0x10) candidate_ = false;
     }
     if (alternate_header_ && index == 6) length_ = input + 8U;
-    if (index == 5 && input != 0x27) candidate_ = false;
+    if (index == 5 && input != (frame_[1] == 0x49 ? 0x28 : 0x27)) candidate_ = false;
 
     if (holding_ && !candidate_) {
       release(out);
@@ -63,7 +64,8 @@ class CnrfFrameRewriter {
         if (sum_ == 0xfc) {
           ++temperature_frames_;
           if (controller_ >= 1 && controller_ <= 8) {
-            const auto position = 5U + controller_;
+            // Setpoint messages carry the requested temperature before the eight room measurements.
+            const auto position = (frame_[1] == 0x49 ? 6U : 5U) + controller_;
             const auto original = frame_[position];
             last_original_temperature_ = original == 0xff ? NAN : decode_temperature(original);
             last_forwarded_temperature_ = last_original_temperature_;
@@ -71,6 +73,7 @@ class CnrfFrameRewriter {
               const auto replacement = encode_temperature(target_);
               if (replacement != original) {
                 out.original_temperature = original;
+                out.temperature_position = position;
                 frame_[position] = replacement;
                 frame_[21] = static_cast<std::uint8_t>(frame_[21] + original - replacement);
                 ++modified_frames_;

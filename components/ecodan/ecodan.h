@@ -43,6 +43,8 @@ namespace ecodan
             return proxy_mode_ && cnrf_proxy_.set_timeout(timeout_seconds);
         }
         CnrfProxyStatus get_proxy_status() { return cnrf_proxy_.status(); }
+        void start_proxy_capture() { cnrf_proxy_.start_capture(); }
+        CnrfCapture take_proxy_capture() { return cnrf_proxy_.take_capture(); }
         void on_shutdown() override { if (proxy_mode_) cnrf_proxy_.stop(); }
 #endif
     

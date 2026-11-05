@@ -13,6 +13,11 @@ constexpr std::array<std::uint8_t, 22> kNormalFrame = {
     0xfc, 0x48, 0x04, 0x03, 0x10, 0x27, 0xa8, 0xa8, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0x03, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2e};
 
+// Captured on the PAR-WR61R-E: setpoint 16.5 C, RC1 room temperature 23 C.
+constexpr std::array<std::uint8_t, 22> kSetpointFrame = {
+    0xfc, 0x49, 0x04, 0x03, 0x10, 0x28, 0xa1, 0xae, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x01, 0xff, 0x00, 0x00, 0x00, 0x30};
+
 std::uint8_t checksum(const std::array<std::uint8_t, 22> &frame) {
   std::uint8_t sum = 0;
   for (std::size_t i = 0; i < frame.size() - 1; ++i) {
@@ -84,6 +89,51 @@ void test_other_packet_is_untouched() {
   assert(output == input);
 }
 
+void test_captured_setpoints_keep_requested_temperature() {
+  for (const auto setpoint : {0xa1, 0xa0}) {
+    auto input = kSetpointFrame;
+    input[6] = setpoint;
+    input[21] = setpoint == 0xa1 ? 0x30 : 0x31;
+    auto expected = input;
+    expected[7] = 0xa4;  // 18 C, independent of the requested setpoint.
+    expected[21] = setpoint == 0xa1 ? 0x3a : 0x3b;
+    CnrfFrameRewriter rewriter;
+    assert(rewrite(input, rewriter, true, 18) == expected);
+    assert(rewriter.last_original_temperature() == 23);
+    assert(rewriter.last_forwarded_temperature() == 18);
+  }
+}
+
+void test_setpoint_controller_positions_and_absence() {
+  for (const auto controller : {1, 2, 8}) {
+    const std::size_t position = controller == 1 ? 7 : controller == 2 ? 8 : 14;
+    auto input = kSetpointFrame;
+    input[position] = 0xa8;
+    input[21] = checksum(input);
+    CnrfFrameRewriter rewriter(controller);
+    const auto output = rewrite(input, rewriter, true, 18);
+    assert(output[position] == 0xa4 && output[21] == checksum(output));
+    for (std::size_t i = 0; i < input.size(); ++i)
+      if (i != position && i != 21) assert(output[i] == input[i]);
+    input[position] = 0xff;
+    input[21] = checksum(input);
+    assert(rewrite(input, rewriter, true, 18) == input);
+  }
+}
+
+void test_setpoint_passthrough_guards() {
+  CnrfFrameRewriter rewriter;
+  assert(rewrite(kSetpointFrame, rewriter, false, 18) == kSetpointFrame);
+  assert(rewrite(kSetpointFrame, rewriter, true, NAN) == kSetpointFrame);
+  auto corrupt = kSetpointFrame;
+  corrupt[21] ^= 1;
+  assert(rewrite(corrupt, rewriter, true, 18) == corrupt);
+  auto mismatched = kSetpointFrame;
+  mismatched[1] = 0x48;
+  mismatched[21] = checksum(mismatched);
+  assert(rewrite(mismatched, rewriter, true, 18) == mismatched);
+}
+
 void test_full_temperature_range() {
   CnrfFrameRewriter rewriter;
   for (std::uint8_t original = 0x94; original <= 0xbc; ++original) {
@@ -118,6 +168,25 @@ void test_missing_controller_is_not_created() {
 
 void append(std::vector<std::uint8_t> &out, const CnrfFrameRewriter::Output &chunk) {
   out.insert(out.end(), chunk.bytes.begin(), chunk.bytes.begin() + chunk.size);
+}
+
+void test_setpoint_interruption() {
+  for (std::size_t split = 1; split < kSetpointFrame.size(); ++split) {
+    CnrfFrameRewriter rewriter;
+    std::vector<std::uint8_t> output;
+    for (std::size_t i = 0; i < split; ++i)
+      append(output, rewriter.process(kSetpointFrame[i], i, true, 18));
+    assert(output.empty());
+    append(output, rewriter.tick(split + 20, true));
+    assert(output == std::vector<std::uint8_t>(kSetpointFrame.begin(), kSetpointFrame.begin() + split));
+  }
+  CnrfFrameRewriter rewriter;
+  std::vector<std::uint8_t> output;
+  for (std::size_t i = 0; i < kSetpointFrame.size(); ++i) {
+    if (i == 10) rewriter.invalidate();
+    append(output, rewriter.process(kSetpointFrame[i], i, true, 18));
+  }
+  assert(output == std::vector<std::uint8_t>(kSetpointFrame.begin(), kSetpointFrame.end()));
 }
 
 void test_stream_boundaries() {
@@ -202,6 +271,10 @@ void test_bad_checksum_diagnostics_and_wrap() {
 }  // namespace
 
 int main() {
+  test_captured_setpoints_keep_requested_temperature();
+  test_setpoint_controller_positions_and_absence();
+  test_setpoint_passthrough_guards();
+  test_setpoint_interruption();
   // An override must never repair a corrupted incoming frame.
   auto corrupt = kNormalFrame;
   corrupt[21] ^= 1;

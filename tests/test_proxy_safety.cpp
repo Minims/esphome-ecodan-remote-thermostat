@@ -46,7 +46,8 @@ void run_case(const std::string &name, bool setpoint = false) {
     port.fail_enable_interrupt = false;
   }
   const bool queued_case = name == "queued_expiry" || name == "queued_disable" || name == "queued_replace" ||
-                           name == "queued_timeout" || name == "queued_fault" || name == "partial_expiry";
+                           name == "queued_timeout" || name == "queued_fault" || name == "partial_expiry" ||
+                           name == "queued_renew" || name == "queued_renew_expired";
   std::atomic<bool> resume_tx{false};
   if (queued_case) {
     fake_ports[0].write_limit = name == "partial_expiry" ? 7 : 0;
@@ -98,7 +99,11 @@ void run_case(const std::string &name, bool setpoint = false) {
       await([&] { return output(0).size() == 7; });
       cycle();
     } else assert(output(0).empty());
-    if (name == "queued_disable") proxy.disable();
+    if (name == "queued_renew" || name == "queued_renew_expired") {
+      fake_now = name == "queued_renew" ? 1010 : 1050;
+      assert(proxy.apply(16, 899960));
+      assert(proxy.status().remaining_ms == 40);
+    } else if (name == "queued_disable") proxy.disable();
     else if (name == "queued_replace") assert(proxy.apply(19, 0));
     else if (name == "queued_timeout") assert(proxy.set_timeout(300));
     else if (name == "queued_fault") {
@@ -109,16 +114,38 @@ void run_case(const std::string &name, bool setpoint = false) {
       await([&] { return proxy.status().uart_fault; });
     } else fake_now = 1050;
     cycle();
-    if (name != "queued_replace") assert(!proxy.status().effective);
+    if (name != "queued_replace" && name != "queued_renew" && name != "queued_renew_expired") assert(!proxy.status().effective);
     resume_tx = true;
     await([&] { return output(0).size() == 22; });
     auto expected = temperature_frame;
-    if (name == "partial_expiry") { expected[room_position] = 0xa0; expected[21] = checksum16; }
+    if (name == "partial_expiry" || name == "queued_renew") { expected[room_position] = 0xa0; expected[21] = checksum16; }
     assert(output(0) == expected);
     deliver(1, temperature_frame);
     await([&] { return output(0).size() == 44; });
     expected = temperature_frame;
     if (name == "queued_replace") { expected[room_position] = 0xa6; expected[21] = checksum19; }
+    if (name == "queued_renew" || name == "queued_renew_expired") {
+      expected[room_position] = 0xa0; expected[21] = checksum16;
+    }
+    const auto bytes = output(0);
+    assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
+  } else if (name == "renew_same" || name == "renew_same_expired" || name == "renew_same_quantized") {
+    assert(proxy.apply(16, name == "renew_same_expired" ? 899950 : 0));
+    deliver(1, {temperature_frame.begin(), temperature_frame.begin() + 11});
+    await([&] { return proxy.status().receiver_bytes == 11; });
+    fake_now = name == "renew_same_expired" ? 1050 : 1010;
+    assert(proxy.apply(name == "renew_same_quantized" ? 16.1F : 16.0F, 10));
+    assert(proxy.status().remaining_ms == 899990);
+    deliver(1, {temperature_frame.begin() + 11, temperature_frame.end()});
+    await([&] { return output(0).size() == 22; });
+    auto expected = temperature_frame;
+    if (name != "renew_same_expired") {
+      expected[room_position] = 0xa0; expected[21] = checksum16;
+    }
+    assert(output(0) == expected);
+    deliver(1, temperature_frame);
+    await([&] { return output(0).size() == 44; });
+    expected[room_position] = 0xa0; expected[21] = checksum16;
     const auto bytes = output(0);
     assert(std::equal(expected.begin(), expected.end(), bytes.begin() + 22));
   } else if (name == "queued_order") {
@@ -335,7 +362,8 @@ int main(int argc, char **argv) {
                            "frame_error_receiver", "interrupt_failure_ftc", "interrupt_failure_receiver",
                            "timeout_runtime", "timeout_pending", "queued_expiry", "queued_disable", "queued_replace",
                            "queued_timeout", "queued_fault", "partial_expiry", "queued_order",
-                           "fault_before_tx_ftc", "fault_before_tx_receiver"})
+                           "fault_before_tx_ftc", "fault_before_tx_receiver", "renew_same", "renew_same_expired",
+                           "renew_same_quantized", "queued_renew", "queued_renew_expired"})
     {
       run_case(name);
       run_case(name, true);

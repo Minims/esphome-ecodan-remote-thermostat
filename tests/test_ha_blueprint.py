@@ -11,6 +11,7 @@ import yaml
 inputs = {
     'temperature_sensor': 'sensor.bedroom',
     'timeout_sensor': 'number.proxy_timeout',
+    'always_active': False,
     'start_time': '22:30:00',
     'end_time': '07:00:00',
     'override_action': 'esphome.custom_cnrf_override',
@@ -91,6 +92,13 @@ cases = [
     {'name': 'journée fin', 'start': '08:00:00', 'end': '18:00:00',
      'now': night.replace(hour=18), 'expected': False},
     {'name': 'journée nuit', 'start': '08:00:00', 'end': '18:00:00', 'expected': False},
+    {'name': 'permanent en journée', 'always_active': True, 'now': night.replace(hour=12)},
+    {'name': 'permanent à 23 h 59', 'always_active': True, 'start': '00:00:00', 'end': '23:59:00',
+     'now': night.replace(hour=23, minute=59)},
+    {'name': 'permanent heures identiques', 'always_active': True, 'start': '07:00:00', 'end': '07:00:00'},
+    {'name': 'permanent mesure expirée', 'always_active': True, 'age': 900, 'timeout': '900', 'expected': False},
+    {'name': 'permanent sonde indisponible', 'always_active': True, 'temperature': 'unavailable', 'expected': False},
+    {'name': 'permanent sonde restaurée', 'always_active': True, 'restored': 'sensor.bedroom', 'expected': False},
     {'name': 'heures identiques', 'start': '07:00:00', 'end': '07:00:00', 'expected': False},
 ]
 for case in cases:
@@ -105,7 +113,7 @@ for case in cases:
     sensor_states['sensor.bedroom'].last_reported = now
     if case.get('missing'):
         del sensor_states['sensor.bedroom']
-    context = dict(inputs, now=lambda: now, states=sensor_states,
+    context = dict(inputs, always_active=case.get('always_active', False), now=lambda: now, states=sensor_states,
                    state_attr=lambda entity, attr: entity == case.get('restored'), as_timestamp=timestamp,
                    start_time=case.get('start', inputs['start_time']),
                    end_time=case.get('end', inputs['end_time']))

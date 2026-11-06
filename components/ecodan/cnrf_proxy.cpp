@@ -48,10 +48,14 @@ void CnrfProxy::stop() {
 
 bool CnrfProxy::apply(float temperature, int32_t sample_age_ms) {
   portENTER_CRITICAL(&mutex_);
-  bool accepted = status_.ready && override_.accept(temperature, sample_age_ms, millis());
+  const auto now = millis();
+  const bool was_effective = override_.effective(now);
+  const auto previous_temperature = override_.temperature();
+  bool accepted = status_.ready && override_.accept(temperature, sample_age_ms, now);
   if (accepted) {
     status_.uart_fault = false;
-    ++override_generation_;
+    // A valid renewal of the same encoded temperature must not release an unmodified frame.
+    if (!was_effective || previous_temperature != override_.temperature()) ++override_generation_;
   }
   portEXIT_CRITICAL(&mutex_);
   return accepted;

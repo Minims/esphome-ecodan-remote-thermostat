@@ -67,11 +67,13 @@ Le formatage et la réponse réseau s’exécutent hors de la tâche UART.
 
 Une température non finie/hors plage, un âge négatif ou supérieur ou égal à la durée actuellement réglée (en ms) et un pont indisponible font échouer l’activation sans rafraîchir l’état précédent. La réponse native indique le succès ou l’échec ; si les données de réponse sont demandées, elle contient aussi `remaining_ms`.
 
-Une nouvelle mesure acceptée annule le remplacement prévu pour une trame encore en cours de réception : celle-ci est transmise sans modification, et la nouvelle mesure s’applique aux trames suivantes. Cela empêche de réutiliser une ancienne mesure expirée avec la validité de la nouvelle commande.
+Une mesure acceptée conserve la réécriture en cours si le remplacement précédent est encore valide et si la température arrondie à 0,5 °C reste identique. Sa validité est recalculée avec l’âge fourni, sans rajeunir la mesure. Si la température change ou si l’ancienne mesure a expiré, la trame en cours retrouve sa mesure d’origine ; la nouvelle mesure s’applique aux trames suivantes.
 
 Avec le nom de nœud fourni, les actions HA sont normalement `esphome.ecodan_cnrf_proxy_cnrf_override` et `esphome.ecodan_cnrf_proxy_cnrf_disable` : vérifier leur nom dans les outils de développement après ajout de l’intégration ESPHome. L’exemple [home_assistant_package.example.yaml](../home_assistant_package.example.yaml) garde les noms de scripts `cnrf_proxy_temperature_chambre` et `cnrf_proxy_retour_salon`.
 
 ### Blueprint Home Assistant
+
+L’option **Actif 24 h/24**, désactivée par défaut, ignore les heures de début et de fin. L’activer pour un remplacement permanent sans coupure de 23:59 à minuit. Les contrôles de température, d’état restauré et de fraîcheur restent appliqués ; le délai continue de provenir du réglage ESPHome.
 
 Cliquer sur le bouton pour ouvrir l'import du blueprint dans votre instance :
 
@@ -130,7 +132,7 @@ Une tâche FreeRTOS possède les pilotes UART IDF. Chaque UART a un tampon RX de
 
 En mode transparent, le parseur ne retient pas les octets. En mode override, il attend le checksum de la candidate : **environ 101 ms d’attente pour 22 caractères à 2400 bauds/8E1**, auxquels s’ajoutent l’ordonnancement et la file d’émission. La tâche libère une candidate incomplète après 20 ms sans octet traité, seulement si la FIFO matérielle et le tampon RX sont vides. Cette vérification se fait sous section critique sur le cœur des interruptions UART ; un retard de traitement d’octets déjà reçus ne crée plus une frontière de trame. En cas de retard masquant un vrai silence, la resynchronisation peut attendre le prochain silence observable. Ces délais doivent être vérifiés sur les équipements réels avant exploitation.
 
-Avant le premier octet écrit dans la FIFO TX, une trame modifiée en attente retrouve sa température et son checksum d’origine si la mesure a expiré, a été désactivée ou remplacée, si la durée a changé ou si une erreur UART est survenue. Une trame dont l’émission a commencé est terminée sans modification supplémentaire pour préserver son checksum. Les compteurs et la dernière température préparée décrivent toujours la sortie du parseur, même si le remplacement est ensuite annulé avant émission. À expiration, les prochaines trames officielles repassent. Le logiciel ne crée pas de mesure ni de message pour masquer l’absence du récepteur. Une panne ou une coupure d’alimentation du proxy peut interrompre CNRF : aucun bypass matériel n’est démontré.
+Avant le premier octet écrit dans la FIFO TX, une trame modifiée en attente retrouve sa température et son checksum d’origine si la mesure a expiré, a été désactivée ou remplacée par une température différente, si la durée a changé ou si une erreur UART est survenue. Une trame dont l’émission a commencé est terminée sans modification supplémentaire pour préserver son checksum. Les compteurs et la dernière température préparée décrivent toujours la sortie du parseur, même si le remplacement est ensuite annulé avant émission. À expiration, les prochaines trames officielles repassent. Le logiciel ne crée pas de mesure ni de message pour masquer l’absence du récepteur. Une panne ou une coupure d’alimentation du proxy peut interrompre CNRF : aucun bypass matériel n’est démontré.
 
 ## Vérification et recette restante
 
@@ -147,7 +149,7 @@ Les tests natifs utilisent AddressSanitizer et UndefinedBehaviorSanitizer. Ils c
 
 Quatorze régressions supplémentaires exécutent la tâche de production : réception en FIFO, livraison retardée, dix trames consécutives, vrai silence à 20 ms, erreur UART derrière 500 événements, activation juste avant le verrou, remplacement d’une mesure pendant une trame avant/après expiration et rejet d’une commande invalide. Elles couvrent aussi les erreurs de trame sur chaque UART et le refus de démarrage si leur interruption ne peut pas être activée. Les tests de templates exercent dix-sept cas, dont valeur stable fraîche, horodatage absent/futur, cache restauré, passage à 7 h et délais de cinq/quinze minutes. La validation dans l’instance Home Assistant réelle reste à faire.
 
-Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 31 scénarios de templates, avec la durée lue depuis une entité `number`.
+Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 37 scénarios de templates, avec la durée lue depuis une entité `number`.
 
 Sept régressions couvrent aussi les trames en attente TX : expiration, désactivation, remplacement de mesure, changement de durée, erreur UART, émission déjà commencée et conservation de l’ordre entre octets transparents et trames.
 
@@ -163,3 +165,5 @@ Deux régressions injectent une erreur de parité, sur chaque UART, entre la lec
 Avant raccordement : contrôle de continuité et de l’orientation des câbles, passage du 12 V, niveaux RX/TX et fronts sous charge. Le manuel Asgard interdit l’alimentation USB simultanée à l’alimentation PAC. Mesurer d’abord une liaison directe puis le proxy transparent ; vérifier ensuite la latence des candidates actives avec le récepteur réel. Tester HTTP lent, Wi-Fi coupé/rétabli, récepteur absent, expiration, redémarrage, commandes de consigne et ECS. Si la latence provoque des timeouts, garder l’override désactivé et reprendre l’analyse des captures.
 
 Voir également le [dossier électrique du workspace](../../Asguard/Analyse_Electronique_Asgard_v1.md) et le [plan de recette](../../docs/superpowers/plans/2026-10-09_Proxy_CNRF_Interface_Web.md). Ces liens concernent l’organisation locale du workspace.
+
+Dix régressions supplémentaires couvrent les renouvellements identiques en réception et avant TX, les valeurs donnant le même arrondi CNRF et les renouvellements après expiration, pour les trames de mesure et de consigne.

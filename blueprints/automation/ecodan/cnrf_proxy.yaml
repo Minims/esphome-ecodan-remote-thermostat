@@ -4,8 +4,9 @@ blueprint:
     Remplace la mesure RC1 pendant la plage choisie (22 h 30–7 h par défaut),
     ou en permanence si « Actif 24 h/24 » est activé.
     Hors plage ou si la mesure est invalide ou périmée, revient au thermostat.
-    L'âge est calculé depuis last_updated de la sonde, sans capteur de date séparé.
-    Cette date avance si la valeur ou un attribut change ; une mesure identique
+    L'âge est calculé depuis l'attribut sample_timestamp si présent, sinon depuis
+    last_updated de la sonde, sans capteur de date séparé.
+    Sans cet attribut, last_updated avance si la valeur ou un attribut change ; une mesure identique
     sans changement d'attribut peut donc expirer malgré de nouveaux relevés.
     Une mise à jour d'attribut ou de cache ne prouve pas une nouvelle mesure physique.
     Désactiver l'ancienne automatisation avant d'activer celle-ci.
@@ -87,7 +88,8 @@ actions:
       sample_temperature: "{{ states(temperature_sensor) }}"
       sample_timestamp: >-
         {%- set sensor = states[temperature_sensor] -%}
-        {{ sensor.last_updated.isoformat() if sensor is not none else '' }}
+        {{ sensor.attributes.get('sample_timestamp', sensor.last_updated.isoformat())
+           if sensor is not none else '' }}
   - choose:
       - conditions:
           - condition: template

@@ -101,12 +101,22 @@ de jour fonctionne aussi et des heures identiques désactivent le remplacement.
 Le blueprint réévalue la mesure aux bornes de la plage, au démarrage HA, aux
 changements de la sonde ou du réglage de durée et chaque minute. Hors plage ou si les données
 sont invalides, futures, restaurées ou périmées, il demande le retour au thermostat.
-Il transmet l'âge de `last_updated` au firmware sans le remettre à zéro.
-Cette date change lorsque la valeur ou un attribut change, contrairement à
-`last_changed` qui suit seulement la valeur. Une température et des attributs
-inchangés peuvent donc expirer malgré de nouveaux relevés. À l'inverse, un changement
-d'attribut ou une republication de cache peut rajeunir cette date sans nouvelle mesure
-physique : le contrôle de fraîcheur dépend du comportement de l'intégration de la sonde.
+Si la sonde expose l'attribut `sample_timestamp`, le blueprint utilise cette date
+pour calculer l'âge envoyé au firmware. Cet attribut doit contenir la date du
+rapport de la source ayant fourni la valeur, par exemple en ISO 8601. Une date
+vide, nulle, invalide, future ou périmée provoque le retour au thermostat : elle
+n'est pas remplacée par la date du template. Changer de source ou recharger un
+template ne doit pas remplacer cette date par `now()`.
+
+Sans cet attribut, le blueprint conserve le calcul depuis `last_updated` pour
+les sondes existantes. Cette date avance si la valeur ou un attribut change ;
+une température identique peut donc expirer malgré de nouveaux relevés. Pour un
+template de minimum, faire suivre la date de la sonde qui fournit ce minimum,
+puis transmettre cet attribut dans les éventuels templates intermédiaires. Une
+mise à jour de la sonde plus chaude ne doit pas rajeunir une mesure minimale ancienne.
+La fiabilité de la date source reste liée au comportement de son intégration :
+un changement d'attribut ou une republication de cache ne prouve pas une nouvelle
+mesure physique.
 Voir les [dates des états Home Assistant](https://www.home-assistant.io/docs/configuration/state_object/).
 Désactiver l'ancienne automatisation du package avant d'activer celle du blueprint,
 et n'utiliser qu'une automatisation pour un même proxy afin d'éviter des commandes concurrentes.
@@ -149,7 +159,7 @@ Les tests natifs utilisent AddressSanitizer et UndefinedBehaviorSanitizer. Ils c
 
 Quatorze régressions supplémentaires exécutent la tâche de production : réception en FIFO, livraison retardée, dix trames consécutives, vrai silence à 20 ms, erreur UART derrière 500 événements, activation juste avant le verrou, remplacement d’une mesure pendant une trame avant/après expiration et rejet d’une commande invalide. Elles couvrent aussi les erreurs de trame sur chaque UART et le refus de démarrage si leur interruption ne peut pas être activée. Les tests de templates exercent dix-sept cas, dont valeur stable fraîche, horodatage absent/futur, cache restauré, passage à 7 h et délais de cinq/quinze minutes. La validation dans l’instance Home Assistant réelle reste à faire.
 
-Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 37 scénarios de templates, avec la durée lue depuis une entité `number`.
+Deux autres régressions couvrent le changement de durée à chaud (bornes, entrées invalides, annulation de l'ancienne mesure, expiration sous la nouvelle limite) et son changement pendant une trame. Le blueprint est exercé sur 43 scénarios de templates, avec la durée lue depuis une entité `number`.
 
 Sept régressions couvrent aussi les trames en attente TX : expiration, désactivation, remplacement de mesure, changement de durée, erreur UART, émission déjà commencée et conservation de l’ordre entre octets transparents et trames.
 

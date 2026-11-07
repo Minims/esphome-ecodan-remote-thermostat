@@ -99,6 +99,12 @@ cases = [
     {'name': 'permanent mesure expirée', 'always_active': True, 'age': 900, 'timeout': '900', 'expected': False},
     {'name': 'permanent sonde indisponible', 'always_active': True, 'temperature': 'unavailable', 'expected': False},
     {'name': 'permanent sonde restaurée', 'always_active': True, 'restored': 'sensor.bedroom', 'expected': False},
+    {'name': 'source fraîche et template ancien', 'age': 700, 'sample_age': 5},
+    {'name': 'source périmée et template récent', 'age': 5, 'sample_age': 700, 'expected': False},
+    {'name': 'date source future', 'sample_age': -1, 'expected': False},
+    {'name': 'date source vide', 'sample_timestamp': '', 'expected': False},
+    {'name': 'date source nulle', 'sample_timestamp': None, 'expected': False},
+    {'name': 'date source invalide', 'sample_timestamp': 'invalid', 'expected': False},
     {'name': 'heures identiques', 'start': '07:00:00', 'end': '07:00:00', 'expected': False},
 ]
 for case in cases:
@@ -109,6 +115,13 @@ for case in cases:
               'number.proxy_timeout': case.get('timeout', '600')}
     sensor_states = SensorStates({entity: SimpleNamespace(state=value) for entity, value in states.items()})
     sensor_states['sensor.bedroom'].last_updated = datetime.fromisoformat(stamp)
+    sensor_states['sensor.bedroom'].attributes = {}
+    expected_stamp = stamp
+    if 'sample_age' in case:
+        expected_stamp = (now - timedelta(seconds=case['sample_age'])).isoformat()
+        sensor_states['sensor.bedroom'].attributes['sample_timestamp'] = expected_stamp
+    if 'sample_timestamp' in case:
+        sensor_states['sensor.bedroom'].attributes['sample_timestamp'] = case['sample_timestamp']
     sensor_states['sensor.bedroom'].last_changed = now - timedelta(days=1)
     sensor_states['sensor.bedroom'].last_reported = now
     if case.get('missing'):
@@ -124,7 +137,7 @@ for case in cases:
     if case.get('expected', True):
         assert float(env.from_string(payload['temperature']).render(**context)) == float(states['sensor.bedroom'])
         milliseconds = int(env.from_string(payload['sample_age_ms']).render(**context))
-        assert milliseconds == math.ceil((now.timestamp() - timestamp(stamp)) * 1000), case['name']
+        assert milliseconds == math.ceil((now.timestamp() - timestamp(expected_stamp)) * 1000), case['name']
 
 assert choice['sequence'][0]['action'] == inputs['override_action']
 assert blueprint['actions'][1]['default'][0]['action'] == inputs['disable_action']
